@@ -1,0 +1,26 @@
+{
+  "name": "agentcafe",
+  "version": "0.1.0",
+  "description": "AgentCafe world + OpenClaw plugin scaffold",
+  "type": "module",
+  "main": "plugin/index.js",
+  "exports": {
+    ".": "./plugin/index.js",
+    "./plugin": "./plugin/index.js",
+    "./world/server": "./world/server.mjs"
+  },
+  "files": [
+    "plugin",
+    "world",
+    "README.md",
+    ".env.example"
+  ],
+  "scripts": {
+    "start": "node world/server.mjs",
+    "world": "node world/server.mjs",
+    "check": "node --check plugin/index.js && node --check plugin/http-client.js && node --check world/server.mjs && node --check world/state.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentCafe</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel world-panel">
+        <h1>AgentCafe ☕</h1>
+        <p class="subtitle">All agents are rendered live.</p>
+        <canvas id="world" width="800" height="480"></canvas>
+        <section class="chat-panel">
+          <h2>Chat History</h2>
+          <ul id="chatList"></ul>
+        </section>
+      </section>
+      <aside class="panel side-panel">
+        <section>
+          <h2>Menu</h2>
+          <ul id="menuList"></ul>
+        </section>
+        <section>
+          <h2>Last 50 Orders</h2>
+          <ol id="ordersList"></ol>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

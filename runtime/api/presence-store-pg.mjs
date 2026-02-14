@@ -139,4 +139,40 @@ export class PgPresenceStore {
       previousStatus: row.previous_status || null
     }));
   }
+
+  async setInactive({ tenantId, roomId, actorId, nowIso = new Date().toISOString() }) {
+    const result = await this.pool.query(
+      `
+      WITH previous AS (
+        SELECT status AS previous_status
+        FROM presence_states
+        WHERE tenant_id = $1 AND room_id = $2 AND actor_id = $3
+        LIMIT 1
+      )
+      UPDATE presence_states p
+      SET
+        status = 'inactive',
+        is_active = false,
+        updated_at = $4::timestamptz
+      FROM previous
+      WHERE p.tenant_id = $1
+        AND p.room_id = $2
+        AND p.actor_id = $3
+      RETURNING
+        p.tenant_id, p.room_id, p.actor_id, p.status, p.last_heartbeat_at, p.ttl_ms, p.expires_at, p.is_active, p.created_at, p.updated_at,
+        previous.previous_status
+      `,
+      [tenantId, roomId, actorId, nowIso]
+    );
+    const state = mapRow(result.rows[0]);
+    if (!state) {
+      return null;
+    }
+    const previousStatus = result.rows[0]?.previous_status || null;
+    return {
+      state,
+      previousStatus,
+      statusChanged: previousStatus !== "inactive"
+    };
+  }
 }

@@ -10,6 +10,12 @@ const TABLE_COORDS = {
   table_7: { x: 10, y: 6 },
   table_8: { x: 14, y: 6 }
 };
+const WORLD_BOUNDS = Object.freeze({
+  minX: 0,
+  maxX: 19,
+  minY: 0,
+  maxY: 11
+});
 
 function actorKey(tenantId, roomId, actorId) {
   return `${tenantId}:${roomId}:${actorId}`;
@@ -44,7 +50,11 @@ export class IntentPlanner {
       }
       const target = TABLE_COORDS[tableId];
       if (!target) {
-        throw new AppError("ERR_VALIDATION", `Unknown table id: ${tableId}`, { code: "ERR_UNKNOWN_TABLE", tableId });
+        throw new AppError("ERR_UNKNOWN_TABLE", `Unknown table id: ${tableId}`, {
+          field: "tableId",
+          tableId,
+          allowed: Object.keys(TABLE_COORDS)
+        });
       }
       return {
         target,
@@ -56,15 +66,26 @@ export class IntentPlanner {
       const x = Number(payload.x);
       const y = Number(payload.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) {
-        throw new AppError("ERR_VALIDATION", "navigate_to requires numeric x/y", {
-          code: "ERR_OUT_OF_BOUNDS",
+        throw new AppError("ERR_OUT_OF_BOUNDS", "navigate_to requires numeric x/y", {
+          field: "x,y",
           x: payload.x,
-          y: payload.y
+          y: payload.y,
+          bounds: WORLD_BOUNDS
+        });
+      }
+      const tx = Math.round(x);
+      const ty = Math.round(y);
+      if (tx < WORLD_BOUNDS.minX || tx > WORLD_BOUNDS.maxX || ty < WORLD_BOUNDS.minY || ty > WORLD_BOUNDS.maxY) {
+        throw new AppError("ERR_OUT_OF_BOUNDS", "navigate_to target is outside world bounds", {
+          field: "x,y",
+          x: tx,
+          y: ty,
+          bounds: WORLD_BOUNDS
         });
       }
       return {
-        target: { x: Math.max(0, Math.min(19, Math.round(x))), y: Math.max(0, Math.min(11, Math.round(y))) },
-        label: `(${Math.round(x)}, ${Math.round(y)})`
+        target: { x: tx, y: ty },
+        label: `(${tx}, ${ty})`
       };
     }
 

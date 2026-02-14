@@ -235,12 +235,13 @@ export class PgReactionStore {
       UPDATE reaction_subscriptions
       SET
         error_count = error_count + 1,
+        last_source_event_id = COALESCE($3::uuid, last_source_event_id),
         last_error = $2,
         updated_at = now()
       WHERE id = $1::uuid
       RETURNING *
       `,
-      [id, error || "reaction failed"]
+      [id, error || "reaction failed", sourceEventId || null]
     );
     return mapRow(result.rows[0]);
   }

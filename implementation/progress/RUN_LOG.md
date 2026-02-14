@@ -458,3 +458,222 @@ Append one section per implementation run.
 - Notes:
   - Profile contract now accepts optional `theme` (`bubbleColor`, `textColor`, `accentColor`).
   - `GET /v1/replay` now enriches snapshot actors/messages/chat with per-actor theme context.
+
+## 2026-02-14 - ACF-803 operator overrides
+- Author: Codex
+- Story completed:
+  - `ACF-803` Operator override panel MVP
+- Files added:
+  - `runtime/api/operator-policy.mjs`
+  - `runtime/api/operator-override-store.mjs`
+  - `runtime/api/operator-override-store-pg.mjs`
+  - `runtime/db/migrations/007_operator_overrides.sql`
+  - `runtime/tests/operator-policy.test.mjs`
+  - `runtime/tests/operator-override-store.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/api/reaction-engine.mjs`
+  - `runtime/api/reaction-store.mjs`
+  - `runtime/api/reaction-store-pg.mjs`
+  - `runtime/api/presence-store.mjs`
+  - `runtime/api/presence-store-pg.mjs`
+  - `runtime/api/trace-store.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/shared/errors.mjs`
+  - `runtime/shared/events.mjs`
+  - `runtime/README.md`
+  - `runtime/db/README.md`
+  - `runtime/tests/reaction-engine.test.mjs`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E8-safety-operator.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 18 passed, 0 failed.
+- Notes:
+  - Added `GET/POST /v1/operator/overrides` for `pause_room`, `resume_room`, `mute_agent`, `unmute_agent`, `force_leave`.
+  - Command/intent actions now enforce operator overrides and return `ERR_OPERATOR_OVERRIDE_BLOCKED` when applicable.
+  - Override actions emit `operator_override_applied` audit events; `force_leave` also emits `agent_left` and status transition events.
+
+## 2026-02-14 - ACF-104 presence event schema stabilization
+- Author: Codex
+- Story completed:
+  - `ACF-104` Presence event schema stabilization
+- Files added:
+  - `runtime/tests/presence-event-schema.test.mjs`
+- Files updated:
+  - `runtime/shared/events.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/README.md`
+  - `implementation/stories/E1-identity-presence.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 20 passed, 0 failed.
+- Notes:
+  - `createEvent` now normalizes/validates payload contracts for `agent_entered`, `agent_left`, and `status_changed`.
+  - `status_changed` now carries canonical `fromStatus`/`toStatus` while keeping `from`/`to` aliases for migration compatibility.
+
+## 2026-02-14 - ACF-701 tasks/quests domain model + API
+- Author: Codex
+- Story completed:
+  - `ACF-701` Tasks/quests domain model + API
+- Files added:
+  - `runtime/api/task-store.mjs`
+  - `runtime/api/task-store-pg.mjs`
+  - `runtime/db/migrations/008_tasks.sql`
+  - `runtime/tests/task-store.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/shared/events.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/README.md`
+  - `runtime/db/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E7-game-loops.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 21 passed, 0 failed.
+- Notes:
+  - Added tasks endpoints: `GET/POST /v1/tasks`, `GET/PATCH /v1/tasks/{taskId}`.
+  - Task lifecycle events now emitted: `task_created`, `task_updated`, `task_assigned`, `task_progress_updated`, `task_completed`.
+  - Replay projection now includes `snapshot.tasks` for task lifecycle visibility.
+
+## 2026-02-14 - ACF-804 operator audit trail
+- Author: Codex
+- Story completed:
+  - `ACF-804` Operator audit trail
+- Files added:
+  - `runtime/api/operator-audit-store.mjs`
+  - `runtime/api/operator-audit-store-pg.mjs`
+  - `runtime/db/migrations/009_operator_audit.sql`
+  - `runtime/tests/operator-audit-store.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/README.md`
+  - `runtime/db/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E8-safety-operator.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 22 passed, 0 failed.
+- Notes:
+  - Added immutable audit endpoint: `GET /v1/operator/audit` with room/operator/time/cursor filters.
+  - Successful operator overrides are now persisted in append-only audit storage with correlation/request IDs.
+
+## 2026-02-14 - ACF-504 domain validation error expansion
+- Author: Codex
+- Story completed:
+  - `ACF-504` Domain validation errors
+- Files added:
+  - `runtime/tests/domain-validation-errors.test.mjs`
+- Files updated:
+  - `runtime/shared/errors.mjs`
+  - `runtime/api/server.mjs`
+  - `runtime/api/intent-planner.mjs`
+  - `runtime/README.md`
+  - `implementation/stories/E5-api-ergonomics.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 24 passed, 0 failed.
+- Notes:
+  - Added canonical domain codes: `ERR_OUT_OF_BOUNDS`, `ERR_UNKNOWN_TABLE`, `ERR_INVALID_DIRECTION`, `ERR_INVALID_ENUM`, `ERR_INVALID_URL`, `ERR_INVALID_COLOR`.
+  - Domain validation paths now return deterministic codes for invalid coordinates, direction, enums, and URL constraints.
+
+## 2026-02-14 - ACF-903 load test suite + SLO gate
+- Author: Codex
+- Story completed:
+  - `ACF-903` Load/SLO gate
+- Files added:
+  - `runtime/load/slo-gate.mjs`
+  - `runtime/tests/load-slo-gate.test.mjs`
+- Files updated:
+  - `package.json`
+  - `.env.example`
+  - `runtime/README.md`
+  - `implementation/stories/E9-migration-cutover.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 26 passed, 0 failed.
+- Notes:
+  - Added `npm run runtime:load` gate command with API latency/error checks and realtime stream fanout readiness checks.
+  - Gate exits non-zero when SLO thresholds fail.
+
+## 2026-02-14 - ACF-902 UI realtime cutover (remove polling dependency)
+- Author: Codex
+- Story completed:
+  - `ACF-902` UI cutover to realtime stream
+- Files updated:
+  - `world/server.mjs`
+  - `world/state.mjs`
+  - `world/public/app.js`
+  - `world/public/index.html`
+  - `README.md`
+  - `.env.example`
+  - `implementation/stories/E9-migration-cutover.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 26 passed, 0 failed.
+- Notes:
+  - Added SSE endpoint `GET /api/stream` and snapshot endpoint `GET /api/view` for dashboard consumption.
+  - World server now pushes state updates on writes (`enter`, `move`, `say`, `order`, `leave`) and on expiry sweeps.
+  - UI removed 1s polling loop and now renders from realtime stream events (`ready`, `state`, `heartbeat`).
+
+## 2026-02-14 - ACF-702 shared objects domain model + API
+- Author: Codex
+- Story completed:
+  - `ACF-702` Shared objects (whiteboard, notes, tokens)
+- Files added:
+  - `runtime/api/shared-object-store.mjs`
+  - `runtime/api/shared-object-store-pg.mjs`
+  - `runtime/db/migrations/010_shared_objects.sql`
+  - `runtime/tests/shared-object-store.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/shared/events.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/README.md`
+  - `runtime/db/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E7-game-loops.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 27 passed, 0 failed.
+- Notes:
+  - Added shared objects API endpoints: `GET/POST /v1/objects`, `GET/PATCH /v1/objects/{objectId}`.
+  - Added durable storage adapters (file + Postgres) and migration for `shared_objects`.
+  - Shared object writes now emit replayable events: `shared_object_created`, `shared_object_updated`.
+  - Projection snapshots and local memory now include shared object updates.

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createEvent, EVENT_TYPES } from "../shared/events.mjs";
+import { evaluateOperatorBlock } from "./operator-policy.mjs";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,12 +39,14 @@ export class ReactionEngine {
     eventStore,
     reactionStore,
     permissionStore,
+    operatorOverrideStore = null,
     moderationPolicy = null,
     maxConcurrency = 4
   } = {}) {
     this.eventStore = eventStore;
     this.reactionStore = reactionStore;
     this.permissionStore = permissionStore;
+    this.operatorOverrideStore = operatorOverrideStore;
     this.moderationPolicy = moderationPolicy;
     this.maxConcurrency = Math.max(1, Number(maxConcurrency) || 4);
     this.unsubscribe = null;
@@ -201,6 +204,27 @@ export class ReactionEngine {
 
     const eventType = eventTypeForAction(subscription.actionType);
     const payload = this.buildReactionPayload(subscription, event);
+    const operatorDecision = this.operatorOverrideStore
+      ? evaluateOperatorBlock(
+          await this.operatorOverrideStore.getRoomState({
+            tenantId: event.tenantId,
+            roomId: event.roomId
+          }),
+          {
+            actorId: subscription.targetActorId,
+            action: subscription.actionType
+          }
+        )
+      : { blocked: false, reasonCode: null };
+    if (operatorDecision.blocked) {
+      this.stats.skipped += 1;
+      await this.reactionStore.recordTrigger(subscription.id, {
+        success: false,
+        sourceEventId: event.eventId,
+        error: `operator_override:${operatorDecision.reasonCode}`
+      });
+      return;
+    }
     const moderationDecision = this.moderationPolicy
       ? this.moderationPolicy.evaluateAndRecord({
           tenantId: event.tenantId,

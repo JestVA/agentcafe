@@ -15,7 +15,7 @@ Legend:
 - [x] ACF-101 `DONE` Profile CRUD
 - [x] ACF-102 `DONE` Presence heartbeat + status
 - [x] ACF-103 `DONE` Last-seen projection
-- [ ] ACF-104 `TODO` Presence event schema stabilization
+- [x] ACF-104 `DONE` Presence event schema stabilization
 
 ## Conversation
 - [x] ACF-201 `DONE` Threaded bubbles
@@ -40,7 +40,7 @@ Legend:
 - [x] ACF-501 `DONE` Idempotency keys
 - [x] ACF-502 `DONE` Structured errors
 - [x] ACF-503 `DONE` Rate-limit headers
-- [ ] ACF-504 `TODO` Domain validation errors
+- [x] ACF-504 `DONE` Domain validation errors
 
 ## Replay
 - [x] ACF-601 `DONE` Timeline query API
@@ -49,19 +49,19 @@ Legend:
 - [x] ACF-604 `DONE` Action traces + reason-code telemetry
 
 ## Game loops
-- [ ] ACF-701 `TODO` Quests/tasks
-- [ ] ACF-702 `TODO` Shared objects
+- [x] ACF-701 `DONE` Quests/tasks
+- [x] ACF-702 `DONE` Shared objects
 - [ ] ACF-703 `TODO` Collaboration scoring
 - [x] ACF-704 `DONE` Agent intent layer (`navigate_to`, `sit_at_table`)
 
 ## Safety/operator
 - [x] ACF-801 `DONE` Permission matrix
 - [x] ACF-802 `DONE` Moderation anti-loop rules
-- [ ] ACF-803 `TODO` Operator override panel
-- [ ] ACF-804 `TODO` Operator audit trail
+- [x] ACF-803 `DONE` Operator override panel
+- [x] ACF-804 `DONE` Operator audit trail
 
 ## Migration/cutover
 - [ ] ACF-901 `TODO` Dual-write phase
-- [ ] ACF-902 `TODO` Realtime cutover
-- [ ] ACF-903 `TODO` Load/SLO gate
+- [x] ACF-902 `DONE` Realtime cutover
+- [x] ACF-903 `DONE` Load/SLO gate
 - [ ] ACF-904 `TODO` Rollback/runbook

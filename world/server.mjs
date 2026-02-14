@@ -12,7 +12,8 @@ import {
   getRecentOrders,
   getRecentChats,
   leaveCafe,
-  getState
+  getState,
+  sweepExpiredState
 } from "./state.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,6 +22,8 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 
 const HOST = process.env.AGENTCAFE_HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || process.env.AGENTCAFE_PORT || 3846);
+const STREAM_HEARTBEAT_MS = Number(process.env.AGENTCAFE_STREAM_HEARTBEAT_MS || 15000);
+const SWEEP_INTERVAL_MS = Number(process.env.AGENTCAFE_SWEEP_INTERVAL_MS || 1000);
 
 const STATIC_FILES = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -28,6 +31,8 @@ const STATIC_FILES = new Map([
   ["/app.js", { file: "app.js", type: "text/javascript; charset=utf-8" }],
   ["/styles.css", { file: "styles.css", type: "text/css; charset=utf-8" }]
 ]);
+const streamClients = new Set();
+let streamSequence = 0;
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -41,6 +46,57 @@ function sendError(res, statusCode, message) {
   sendJson(res, statusCode, {
     ok: false,
     error: message
+  });
+}
+
+function buildViewState() {
+  const state = getState();
+  const orders = getRecentOrders({ limit: 50 });
+  const chats = getRecentChats({ limit: 100 });
+  return {
+    ok: true,
+    world: state.world,
+    actors: state.actors,
+    orders: orders.orders || [],
+    chats: chats.chats || []
+  };
+}
+
+function writeSse(res, { event, data, id }) {
+  if (id != null) {
+    res.write(`id: ${id}\n`);
+  }
+  if (event) {
+    res.write(`event: ${event}\n`);
+  }
+  res.write(`data: ${JSON.stringify(data || {})}\n\n`);
+}
+
+function removeStreamClient(client) {
+  if (!client) {
+    return;
+  }
+  streamClients.delete(client);
+}
+
+function broadcastEvent(event, data) {
+  if (streamClients.size === 0) {
+    return;
+  }
+  const id = ++streamSequence;
+  for (const client of streamClients) {
+    try {
+      writeSse(client.res, { id, event, data });
+    } catch {
+      removeStreamClient(client);
+    }
+  }
+}
+
+function broadcastState(reason) {
+  broadcastEvent("state", {
+    reason,
+    ...buildViewState()
   });
 }
 
@@ -86,8 +142,38 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok: true, service: "agentcafe-world" });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/stream") {
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+
+    const client = { res };
+    streamClients.add(client);
+
+    writeSse(res, {
+      id: ++streamSequence,
+      event: "ready",
+      data: {
+        ok: true,
+        heartbeatMs: STREAM_HEARTBEAT_MS,
+        snapshot: buildViewState()
+      }
+    });
+
+    req.on("close", () => {
+      removeStreamClient(client);
+    });
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/menu") {
     return sendJson(res, 200, requestMenu());
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/view") {
+    return sendJson(res, 200, buildViewState());
   }
 
   if (req.method === "GET" && url.pathname === "/api/state") {
@@ -123,23 +209,38 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/enter") {
-    return sendJson(res, 200, enterCafe(await readBody(req)));
+    const response = enterCafe(await readBody(req));
+    sendJson(res, 200, response);
+    broadcastState("enter");
+    return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/move") {
-    return sendJson(res, 200, moveActor(await readBody(req)));
+    const response = moveActor(await readBody(req));
+    sendJson(res, 200, response);
+    broadcastState("move");
+    return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/say") {
-    return sendJson(res, 200, say(await readBody(req)));
+    const response = say(await readBody(req));
+    sendJson(res, 200, response);
+    broadcastState("say");
+    return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/order") {
-    return sendJson(res, 200, orderCoffee(await readBody(req)));
+    const response = orderCoffee(await readBody(req));
+    sendJson(res, 200, response);
+    broadcastState("order");
+    return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/leave") {
-    return sendJson(res, 200, leaveCafe(await readBody(req)));
+    const response = leaveCafe(await readBody(req));
+    sendJson(res, 200, response);
+    broadcastState("leave");
+    return;
   }
 
   sendError(res, 404, "route not found");
@@ -165,6 +266,22 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     sendError(res, 400, error instanceof Error ? error.message : String(error));
   }
+});
+
+const sweepHandle = setInterval(() => {
+  const sweep = sweepExpiredState();
+  if (sweep.changed) {
+    broadcastState("expiry");
+  }
+}, SWEEP_INTERVAL_MS);
+
+const heartbeatHandle = setInterval(() => {
+  broadcastEvent("heartbeat", { ts: Date.now() });
+}, STREAM_HEARTBEAT_MS);
+
+server.on("close", () => {
+  clearInterval(sweepHandle);
+  clearInterval(heartbeatHandle);
 });
 
 server.listen(PORT, HOST, () => {

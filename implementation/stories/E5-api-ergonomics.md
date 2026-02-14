@@ -28,7 +28,7 @@ Acceptance criteria:
 - Headers consistent and documented.
 
 ## ACF-504 Domain validation errors
-Status: TODO
+Status: DONE
 
 Scope:
 - Canonical codes such as `ERR_OUT_OF_BOUNDS`.

@@ -9,6 +9,10 @@ Migrations live in `runtime/db/migrations`.
 - `004_room_context.sql`: pinned room context table + indexes
 - `005_reactions.sql`: internal reaction subscription table + indexes
 - `006_presence.sql`: heartbeat/status table + expiry indexes
+- `007_operator_overrides.sql`: operator room pause/mute override state
+- `008_tasks.sql`: tasks/quests domain model table + indexes
+- `009_operator_audit.sql`: immutable operator audit log + query indexes
+- `010_shared_objects.sql`: shared artifacts model (`whiteboard|note|token`)
 
 ## Apply manually
 ```bash
@@ -18,6 +22,10 @@ psql "$POSTGRES_URL" -f runtime/db/migrations/003_webhooks.sql
 psql "$POSTGRES_URL" -f runtime/db/migrations/004_room_context.sql
 psql "$POSTGRES_URL" -f runtime/db/migrations/005_reactions.sql
 psql "$POSTGRES_URL" -f runtime/db/migrations/006_presence.sql
+psql "$POSTGRES_URL" -f runtime/db/migrations/007_operator_overrides.sql
+psql "$POSTGRES_URL" -f runtime/db/migrations/008_tasks.sql
+psql "$POSTGRES_URL" -f runtime/db/migrations/009_operator_audit.sql
+psql "$POSTGRES_URL" -f runtime/db/migrations/010_shared_objects.sql
 ```
 
 ## Notes
@@ -29,3 +37,7 @@ psql "$POSTGRES_URL" -f runtime/db/migrations/006_presence.sql
 - `room_context_pins` stores active pinned room context and versioned history.
 - `reaction_subscriptions` stores internal event-driven automation rules for agents.
 - `presence_states` stores status, heartbeat TTL, and active/inactive lifecycle state per room actor.
+- `operator_room_overrides` stores mutable room pause/mute safety controls managed by operators.
+- `tasks` stores multi-agent task lifecycle state (`open|active|done`) with assignee/progress metadata.
+- `operator_audit_log` stores append-only admin actions queryable by room, operator, and time.
+- `shared_objects` stores replayable room artifacts (whiteboards, notes, tokens) with versioned updates.

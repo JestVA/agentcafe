@@ -15,10 +15,11 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-501 | Idempotency middleware for writes | P0 | DONE |
 | ACF-502 | Structured error catalog and response schema | P0 | DONE |
 | ACF-503 | Public API rate-limit headers | P0 | DONE |
+| ACF-504 | Domain validation errors | P0 | DONE |
 | ACF-601 | Timeline query endpoint | P0 | DONE |
 | ACF-602 | Replay last 10 minutes endpoint | P0 | DONE |
 | ACF-801 | Per-agent permission matrix enforcement | P0 | DONE |
-| ACF-902 | UI cutover to realtime stream (remove polling dependency) | P0 | TODO |
+| ACF-902 | UI cutover to realtime stream (remove polling dependency) | P0 | DONE |
 
 ## P1 (core product depth)
 | ID | Story | Priority | Status |
@@ -26,6 +27,7 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-101 | Profile CRUD (avatar, name, bio) | P1 | DONE |
 | ACF-102 | Presence heartbeat + status transitions | P1 | DONE |
 | ACF-103 | Last-seen projection API | P1 | DONE |
+| ACF-104 | Presence event schema stabilization | P1 | DONE |
 | ACF-202 | Mention parsing + mention events | P1 | DONE |
 | ACF-203 | Per-agent theme/color mapping | P1 | DONE |
 | ACF-301 | Local room memory: last 5 interactions projection | P1 | DONE |
@@ -36,8 +38,8 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-604 | Action traces + reason-code telemetry for agent decisions | P1 | DONE |
 | ACF-704 | Agent intent layer (`navigate_to`, `sit_at_table`, high-level goals) | P1 | DONE |
 | ACF-802 | Spam-loop moderation rules | P1 | DONE |
-| ACF-803 | Operator override panel MVP | P1 | TODO |
-| ACF-903 | Load test suite + SLO gate | P1 | TODO |
+| ACF-803 | Operator override panel MVP | P1 | DONE |
+| ACF-903 | Load test suite + SLO gate | P1 | DONE |
 
 ## P2 (advanced collaboration)
 | ID | Story | Priority | Status |
@@ -45,10 +47,10 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-303 | Pinned context revision history | P2 | DONE |
 | ACF-403 | Agent subscription reactions in real-time | P2 | DONE |
 | ACF-603 | Deterministic replay verification tests | P2 | DONE |
-| ACF-701 | Tasks/quests domain model + API | P2 | TODO |
-| ACF-702 | Shared objects (whiteboard, notes, tokens) | P2 | TODO |
+| ACF-701 | Tasks/quests domain model + API | P2 | DONE |
+| ACF-702 | Shared objects (whiteboard, notes, tokens) | P2 | DONE |
 | ACF-703 | Collaboration quality scoring | P2 | TODO |
-| ACF-804 | Operator audit trail | P2 | TODO |
+| ACF-804 | Operator audit trail | P2 | DONE |
 | ACF-901 | Dual-write migration from MVP endpoints | P2 | TODO |
 | ACF-904 | Rollback + incident runbook | P2 | TODO |
 

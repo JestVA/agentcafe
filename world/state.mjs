@@ -65,12 +65,16 @@ function clamp(n, min, max) {
 }
 
 function cleanActor(actor, now) {
+  let changed = false;
   if (actor.bubble && actor.bubble.expiresAt <= now) {
     actor.bubble = null;
+    changed = true;
   }
   if (actor.currentOrder && actor.currentOrder.expiresAt <= now) {
     actor.currentOrder = null;
+    changed = true;
   }
+  return changed;
 }
 
 function touchActor(actor, now = nowMs()) {
@@ -100,12 +104,22 @@ function ensureActor(actorId = DEFAULT_ACTOR_ID) {
 
 function cleanupExpired() {
   const now = nowMs();
+  let changed = false;
+  const removedActorIds = [];
   for (const [actorId, actor] of actors.entries()) {
-    cleanActor(actor, now);
+    if (cleanActor(actor, now)) {
+      changed = true;
+    }
     if (now - actor.lastActiveAt >= ACTOR_INACTIVITY_MS) {
       actors.delete(actorId);
+      removedActorIds.push(actorId);
+      changed = true;
     }
   }
+  return {
+    changed,
+    removedActorIds
+  };
 }
 
 function normalizeDirection(direction) {
@@ -311,5 +325,13 @@ export function getState({ actorId } = {}) {
       height: GRID_HEIGHT
     },
     actors: list
+  };
+}
+
+export function sweepExpiredState() {
+  const result = cleanupExpired();
+  return {
+    ok: true,
+    ...result
   };
 }

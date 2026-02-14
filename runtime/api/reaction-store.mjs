@@ -151,6 +151,9 @@ export class FileReactionStore {
       row.lastError = null;
     } else {
       row.errorCount = Number(row.errorCount || 0) + 1;
+      if (sourceEventId) {
+        row.lastSourceEventId = sourceEventId;
+      }
       row.lastError = error || "reaction failed";
     }
     await this.persist();

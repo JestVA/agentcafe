@@ -21,6 +21,8 @@ export class ProjectionState {
         messages: [],
         threads: new Map(),
         orders: [],
+        tasks: [],
+        sharedObjects: [],
         lastEventAt: null,
         lastEventId: null
       };
@@ -129,11 +131,106 @@ export class ProjectionState {
         actor.y = Number(event.payload.finalPosition.y) || actor.y;
       }
     } else if (event.type === "status_changed") {
-      actor.status = event.payload?.to || actor.status;
+      const toStatus = event.payload?.toStatus || event.payload?.to || actor.status;
+      actor.status = toStatus;
       actor.presence = {
         ...(actor.presence || {}),
-        isActive: event.payload?.to !== "inactive"
+        isActive: toStatus !== "inactive"
       };
+    } else if (event.type === "task_created") {
+      actor.status = "busy";
+      this.upsertTask(room, {
+        taskId: event.payload?.taskId || null,
+        title: event.payload?.title || null,
+        state: event.payload?.state || "open",
+        assigneeActorId: event.payload?.assigneeActorId || null,
+        progress: Number(event.payload?.progress || 0),
+        createdBy: event.payload?.createdBy || event.actorId,
+        updatedAt: event.timestamp
+      });
+    } else if (event.type === "task_updated") {
+      actor.status = "busy";
+      this.upsertTask(room, {
+        taskId: event.payload?.taskId || null,
+        state: event.payload?.state || null,
+        assigneeActorId: event.payload?.assigneeActorId || null,
+        progress: Number(event.payload?.progress || 0),
+        updatedAt: event.timestamp
+      });
+    } else if (event.type === "task_assigned") {
+      actor.status = "busy";
+      this.upsertTask(room, {
+        taskId: event.payload?.taskId || null,
+        assigneeActorId: event.payload?.toAssigneeActorId || null,
+        updatedAt: event.timestamp
+      });
+    } else if (event.type === "task_progress_updated") {
+      actor.status = "busy";
+      this.upsertTask(room, {
+        taskId: event.payload?.taskId || null,
+        progress: Number(event.payload?.toProgress || 0),
+        updatedAt: event.timestamp
+      });
+    } else if (event.type === "task_completed") {
+      actor.status = "idle";
+      this.upsertTask(room, {
+        taskId: event.payload?.taskId || null,
+        state: "done",
+        progress: Number(event.payload?.progress || 100),
+        completedBy: event.payload?.completedBy || event.actorId,
+        completedAt: event.payload?.completedAt || event.timestamp,
+        updatedAt: event.timestamp
+      });
+    } else if (event.type === "shared_object_created") {
+      actor.status = "busy";
+      this.upsertSharedObject(room, {
+        objectId: event.payload?.objectId || null,
+        objectType: event.payload?.objectType || null,
+        objectKey: event.payload?.objectKey || null,
+        title: event.payload?.title || null,
+        content: event.payload?.content || null,
+        data:
+          event.payload?.data && typeof event.payload.data === "object" && !Array.isArray(event.payload.data)
+            ? event.payload.data
+            : {},
+        quantity: event.payload?.quantity == null ? null : Number(event.payload.quantity),
+        metadata:
+          event.payload?.metadata &&
+          typeof event.payload.metadata === "object" &&
+          !Array.isArray(event.payload.metadata)
+            ? event.payload.metadata
+            : {},
+        version: Number(event.payload?.version || 1),
+        createdBy: event.payload?.createdBy || event.actorId,
+        updatedBy: event.payload?.updatedBy || event.actorId,
+        createdAt: event.payload?.createdAt || event.timestamp,
+        updatedAt: event.payload?.updatedAt || event.timestamp
+      });
+    } else if (event.type === "shared_object_updated") {
+      actor.status = "busy";
+      this.upsertSharedObject(room, {
+        objectId: event.payload?.objectId || null,
+        objectType: event.payload?.objectType || null,
+        objectKey: event.payload?.objectKey || null,
+        title: event.payload?.title || null,
+        content: event.payload?.content || null,
+        data:
+          event.payload?.data && typeof event.payload.data === "object" && !Array.isArray(event.payload.data)
+            ? event.payload.data
+            : {},
+        quantity: event.payload?.quantity == null ? null : Number(event.payload.quantity),
+        metadata:
+          event.payload?.metadata &&
+          typeof event.payload.metadata === "object" &&
+          !Array.isArray(event.payload.metadata)
+            ? event.payload.metadata
+            : {},
+        version: Number(event.payload?.version || 1),
+        createdBy: event.payload?.createdBy || null,
+        updatedBy: event.payload?.updatedBy || event.actorId,
+        createdAt: event.payload?.createdAt || null,
+        updatedAt: event.payload?.updatedAt || event.timestamp
+      });
     } else if (event.type === "room_context_pinned") {
       room.pinnedContext = {
         version: Number(event.payload?.version || 0),
@@ -143,6 +240,8 @@ export class ProjectionState {
         ts: event.timestamp,
         eventId: event.eventId
       };
+    } else if (event.type === "operator_override_applied") {
+      actor.status = "busy";
     }
 
     room.lastEventAt = event.timestamp;
@@ -155,6 +254,74 @@ export class ProjectionState {
     return room;
   }
 
+  upsertTask(room, patch) {
+    const taskId = patch?.taskId;
+    if (!taskId) {
+      return;
+    }
+    const idx = room.tasks.findIndex((item) => item.taskId === taskId);
+    if (idx < 0) {
+      room.tasks.unshift({
+        taskId,
+        title: patch.title || null,
+        state: patch.state || "open",
+        assigneeActorId: patch.assigneeActorId || null,
+        progress: Number(patch.progress || 0),
+        createdBy: patch.createdBy || null,
+        completedBy: patch.completedBy || null,
+        completedAt: patch.completedAt || null,
+        updatedAt: patch.updatedAt || null
+      });
+      room.tasks.length = Math.min(100, room.tasks.length);
+      return;
+    }
+    room.tasks[idx] = {
+      ...room.tasks[idx],
+      ...patch,
+      progress: "progress" in patch ? Number(patch.progress || 0) : room.tasks[idx].progress
+    };
+    room.tasks.sort((a, b) => (a.updatedAt || "") < (b.updatedAt || "") ? 1 : -1);
+  }
+
+  upsertSharedObject(room, patch) {
+    const objectId = patch?.objectId;
+    if (!objectId) {
+      return;
+    }
+
+    const idx = room.sharedObjects.findIndex((item) => item.objectId === objectId);
+    if (idx < 0) {
+      room.sharedObjects.unshift({
+        objectId,
+        objectType: patch.objectType || null,
+        objectKey: patch.objectKey || null,
+        title: patch.title || null,
+        content: patch.content || null,
+        data: patch.data && typeof patch.data === "object" && !Array.isArray(patch.data) ? patch.data : {},
+        quantity: patch.quantity == null ? null : Number(patch.quantity),
+        metadata:
+          patch.metadata && typeof patch.metadata === "object" && !Array.isArray(patch.metadata)
+            ? patch.metadata
+            : {},
+        version: Math.max(1, Number(patch.version || 1)),
+        createdBy: patch.createdBy || null,
+        updatedBy: patch.updatedBy || null,
+        createdAt: patch.createdAt || null,
+        updatedAt: patch.updatedAt || null
+      });
+      room.sharedObjects.length = Math.min(200, room.sharedObjects.length);
+      return;
+    }
+
+    room.sharedObjects[idx] = {
+      ...room.sharedObjects[idx],
+      ...patch,
+      quantity: "quantity" in patch ? (patch.quantity == null ? null : Number(patch.quantity)) : room.sharedObjects[idx].quantity,
+      version: Math.max(1, Number(patch.version || room.sharedObjects[idx].version || 1))
+    };
+    room.sharedObjects.sort((a, b) => (a.updatedAt || "") < (b.updatedAt || "") ? 1 : -1);
+  }
+
   recordLocalMemory(room, event) {
     const allowed = new Set([
       "conversation_message_posted",
@@ -165,7 +332,15 @@ export class ProjectionState {
       "intent_completed",
       "room_context_pinned",
       "presence_heartbeat",
-      "status_changed"
+      "status_changed",
+      "operator_override_applied",
+      "task_created",
+      "task_updated",
+      "task_assigned",
+      "task_progress_updated",
+      "task_completed",
+      "shared_object_created",
+      "shared_object_updated"
     ]);
     if (!allowed.has(event.type)) {
       return;
@@ -202,9 +377,28 @@ export class ProjectionState {
     } else if (event.type === "presence_heartbeat") {
       summary.status = event.payload?.status || null;
     } else if (event.type === "status_changed") {
-      summary.from = event.payload?.from || null;
-      summary.to = event.payload?.to || null;
+      summary.from = event.payload?.fromStatus || event.payload?.from || null;
+      summary.to = event.payload?.toStatus || event.payload?.to || null;
       summary.reason = event.payload?.reason || null;
+    } else if (event.type === "operator_override_applied") {
+      summary.action = event.payload?.action || null;
+      summary.targetActorId = event.payload?.targetActorId || null;
+      summary.reason = event.payload?.reason || null;
+    } else if (
+      event.type === "task_created" ||
+      event.type === "task_updated" ||
+      event.type === "task_assigned" ||
+      event.type === "task_progress_updated" ||
+      event.type === "task_completed"
+    ) {
+      summary.taskId = event.payload?.taskId || null;
+      summary.state = event.payload?.state || null;
+      summary.progress = Number(event.payload?.progress || event.payload?.toProgress || 0);
+    } else if (event.type === "shared_object_created" || event.type === "shared_object_updated") {
+      summary.objectId = event.payload?.objectId || null;
+      summary.objectType = event.payload?.objectType || null;
+      summary.objectKey = event.payload?.objectKey || null;
+      summary.version = Number(event.payload?.version || 1);
     }
 
     room.localMemory.unshift(summary);
@@ -243,6 +437,8 @@ export class ProjectionState {
           }
           return a.lastMessageAt < b.lastMessageAt ? 1 : -1;
         }),
+      tasks: room.tasks.slice(0, 100),
+      sharedObjects: room.sharedObjects.slice(0, 200),
       orders: room.orders.slice(0, 50),
       lastEventAt: room.lastEventAt,
       lastEventId: room.lastEventId

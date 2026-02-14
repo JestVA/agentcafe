@@ -13,6 +13,12 @@ import { hashRequest, InMemoryIdempotencyStore } from "./idempotency-store.mjs";
 import { IntentPlanner } from "./intent-planner.mjs";
 import { projectLastSeen } from "./last-seen-projection.mjs";
 import { ModerationPolicy } from "./moderation-policy.mjs";
+import { calculateCollaborationScore } from "./collaboration-score.mjs";
+import { PgOperatorAuditStore } from "./operator-audit-store-pg.mjs";
+import { FileOperatorAuditStore } from "./operator-audit-store.mjs";
+import { PgOperatorOverrideStore } from "./operator-override-store-pg.mjs";
+import { FileOperatorOverrideStore } from "./operator-override-store.mjs";
+import { evaluateOperatorBlock, isOperatorAction, OPERATOR_ACTIONS } from "./operator-policy.mjs";
 import { PgPermissionStore } from "./permission-store-pg.mjs";
 import { FilePermissionStore } from "./permission-store.mjs";
 import { PgPresenceStore } from "./presence-store-pg.mjs";
@@ -21,9 +27,13 @@ import { PgProfileStore } from "./profile-store-pg.mjs";
 import { FileProfileStore } from "./profile-store.mjs";
 import { PgPinnedContextStore } from "./pinned-context-store-pg.mjs";
 import { FilePinnedContextStore } from "./pinned-context-store.mjs";
+import { PgSharedObjectStore } from "./shared-object-store-pg.mjs";
+import { FileSharedObjectStore } from "./shared-object-store.mjs";
 import { ReactionEngine } from "./reaction-engine.mjs";
 import { PgReactionStore } from "./reaction-store-pg.mjs";
 import { FileReactionStore } from "./reaction-store.mjs";
+import { PgTaskStore } from "./task-store-pg.mjs";
+import { FileTaskStore } from "./task-store.mjs";
 import { FixedWindowRateLimiter } from "./rate-limit.mjs";
 import { InMemorySnapshotStore } from "./snapshot-store.mjs";
 import { PgSubscriptionStore } from "./subscription-store-pg.mjs";
@@ -38,9 +48,14 @@ const EVENT_STORE_FILE = process.env.EVENT_STORE_FILE || "./runtime/data/events.
 const SUBSCRIPTIONS_FILE = process.env.SUBSCRIPTIONS_FILE || "./runtime/data/subscriptions.json";
 const ROOM_CONTEXT_FILE = process.env.ROOM_CONTEXT_FILE || "./runtime/data/room-context.json";
 const PERMISSIONS_FILE = process.env.PERMISSIONS_FILE || "./runtime/data/permissions.json";
+const OPERATOR_OVERRIDES_FILE =
+  process.env.OPERATOR_OVERRIDES_FILE || "./runtime/data/operator-overrides.json";
+const OPERATOR_AUDIT_FILE = process.env.OPERATOR_AUDIT_FILE || "./runtime/data/operator-audit.json";
 const PRESENCE_FILE = process.env.PRESENCE_FILE || "./runtime/data/presence.json";
 const PROFILES_FILE = process.env.PROFILES_FILE || "./runtime/data/profiles.json";
 const REACTIONS_FILE = process.env.REACTIONS_FILE || "./runtime/data/reactions.json";
+const TASKS_FILE = process.env.TASKS_FILE || "./runtime/data/tasks.json";
+const OBJECTS_FILE = process.env.OBJECTS_FILE || "./runtime/data/objects.json";
 const PRESENCE_DEFAULT_TTL_MS = Math.max(1000, Number(process.env.PRESENCE_DEFAULT_TTL_MS || 60000));
 const PRESENCE_SWEEP_MS = Math.max(500, Number(process.env.PRESENCE_SWEEP_MS || 2000));
 
@@ -60,6 +75,12 @@ const subscriptionStore = pgPool
 const permissionStore = pgPool
   ? new PgPermissionStore({ pool: pgPool })
   : new FilePermissionStore({ filePath: PERMISSIONS_FILE });
+const operatorOverrideStore = pgPool
+  ? new PgOperatorOverrideStore({ pool: pgPool })
+  : new FileOperatorOverrideStore({ filePath: OPERATOR_OVERRIDES_FILE });
+const operatorAuditStore = pgPool
+  ? new PgOperatorAuditStore({ pool: pgPool })
+  : new FileOperatorAuditStore({ filePath: OPERATOR_AUDIT_FILE });
 const presenceStore = pgPool
   ? new PgPresenceStore({ pool: pgPool })
   : new FilePresenceStore({ filePath: PRESENCE_FILE });
@@ -69,15 +90,25 @@ const profileStore = pgPool
 const reactionStore = pgPool
   ? new PgReactionStore({ pool: pgPool })
   : new FileReactionStore({ filePath: REACTIONS_FILE });
+const taskStore = pgPool
+  ? new PgTaskStore({ pool: pgPool })
+  : new FileTaskStore({ filePath: TASKS_FILE });
+const sharedObjectStore = pgPool
+  ? new PgSharedObjectStore({ pool: pgPool })
+  : new FileSharedObjectStore({ filePath: OBJECTS_FILE });
 const pinnedContextStore = pgPool
   ? new PgPinnedContextStore({ pool: pgPool })
   : new FilePinnedContextStore({ filePath: ROOM_CONTEXT_FILE });
 await eventStore.init?.();
 await subscriptionStore.init();
 await permissionStore.init();
+await operatorOverrideStore.init();
+await operatorAuditStore.init();
 await presenceStore.init();
 await profileStore.init();
 await reactionStore.init();
+await taskStore.init();
+await sharedObjectStore.init();
 await pinnedContextStore.init();
 const webhookDispatcher = new WebhookDispatcher({
   eventStore,
@@ -89,6 +120,7 @@ const reactionEngine = new ReactionEngine({
   eventStore,
   reactionStore,
   permissionStore,
+  operatorOverrideStore,
   moderationPolicy,
   maxConcurrency: Number(process.env.REACTION_MAX_CONCURRENCY || 4)
 });
@@ -138,11 +170,29 @@ const LOCAL_MEMORY_EVENT_TYPES = [
   EVENT_TYPES.ENTER,
   EVENT_TYPES.LEAVE,
   EVENT_TYPES.INTENT_COMPLETED,
-  EVENT_TYPES.ROOM_CONTEXT_PINNED
+  EVENT_TYPES.ROOM_CONTEXT_PINNED,
+  EVENT_TYPES.OPERATOR_OVERRIDE_APPLIED,
+  EVENT_TYPES.TASK_CREATED,
+  EVENT_TYPES.TASK_UPDATED,
+  EVENT_TYPES.TASK_ASSIGNED,
+  EVENT_TYPES.TASK_PROGRESS_UPDATED,
+  EVENT_TYPES.TASK_COMPLETED,
+  EVENT_TYPES.SHARED_OBJECT_CREATED,
+  EVENT_TYPES.SHARED_OBJECT_UPDATED
+];
+const COLLABORATION_SCORE_EVENT_TYPES = [
+  EVENT_TYPES.CONVERSATION_MESSAGE,
+  EVENT_TYPES.TASK_ASSIGNED,
+  EVENT_TYPES.TASK_COMPLETED,
+  EVENT_TYPES.SHARED_OBJECT_CREATED,
+  EVENT_TYPES.SHARED_OBJECT_UPDATED
 ];
 
 const CAPABILITY_KEYS = new Set(["canMove", "canSpeak", "canOrder", "canEnterLeave", "canModerate"]);
 const PRESENCE_STATUS_VALUES = new Set(["thinking", "idle", "busy", "inactive"]);
+const TASK_STATE_VALUES = new Set(["open", "active", "done"]);
+const OBJECT_TYPE_VALUES = new Set(["whiteboard", "note", "token"]);
+const MOVE_DIRECTIONS = new Set(["N", "S", "E", "W"]);
 const THEME_FIELDS = ["bubbleColor", "textColor", "accentColor"];
 const THEME_COLOR_RE = /^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
@@ -180,11 +230,45 @@ function parsePermissionPatch(body) {
 function parsePresenceStatus(value, fallback = "idle") {
   const status = String(value || fallback).trim().toLowerCase();
   if (!PRESENCE_STATUS_VALUES.has(status)) {
-    throw new AppError("ERR_VALIDATION", "status must be one of thinking|idle|busy|inactive", {
-      field: "status"
+    throw new AppError("ERR_INVALID_ENUM", "status must be one of thinking|idle|busy|inactive", {
+      field: "status",
+      allowed: [...PRESENCE_STATUS_VALUES]
     });
   }
   return status;
+}
+
+function parseMoveDirection(value, { field = "direction" } = {}) {
+  const direction = String(value || "").trim().toUpperCase();
+  if (!MOVE_DIRECTIONS.has(direction)) {
+    throw new AppError("ERR_INVALID_DIRECTION", `${field} must be one of N|S|E|W`, {
+      field,
+      allowed: [...MOVE_DIRECTIONS]
+    });
+  }
+  return direction;
+}
+
+function parseBoundedSteps(value, { field = "steps", min = 1, max = 50, fallback = 1 } = {}) {
+  const numeric = value == null || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(numeric)) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be a number between ${min} and ${max}`, {
+      field,
+      min,
+      max,
+      value
+    });
+  }
+  const rounded = Math.round(numeric);
+  if (rounded < min || rounded > max) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be a number between ${min} and ${max}`, {
+      field,
+      min,
+      max,
+      value: rounded
+    });
+  }
+  return rounded;
 }
 
 function parseProfileTheme(value, { field = "theme", partial = false } = {}) {
@@ -206,8 +290,9 @@ function parseProfileTheme(value, { field = "theme", partial = false } = {}) {
       continue;
     }
     if (!THEME_COLOR_RE.test(color)) {
-      throw new AppError("ERR_VALIDATION", `${field}.${key} must be a hex color`, {
-        field: `${field}.${key}`
+      throw new AppError("ERR_INVALID_COLOR", `${field}.${key} must be a hex color`, {
+        field: `${field}.${key}`,
+        value: color
       });
     }
     out[key] = color.toLowerCase();
@@ -216,6 +301,220 @@ function parseProfileTheme(value, { field = "theme", partial = false } = {}) {
   if (!Object.keys(out).length) {
     return null;
   }
+  return out;
+}
+
+function validateOperatorOverrideInput(input) {
+  const action = optionalString(input, "action");
+  if (!action || !isOperatorAction(action)) {
+    throw new AppError("ERR_INVALID_ENUM", "action must be a valid operator override action", {
+      field: "action",
+      allowed: Object.values(OPERATOR_ACTIONS)
+    });
+  }
+
+  const targetActorId = optionalString(input, "targetActorId", null);
+  if (
+    (action === OPERATOR_ACTIONS.MUTE_AGENT ||
+      action === OPERATOR_ACTIONS.UNMUTE_AGENT ||
+      action === OPERATOR_ACTIONS.FORCE_LEAVE) &&
+    !targetActorId
+  ) {
+    throw new AppError("ERR_MISSING_FIELD", "Missing required field: targetActorId", {
+      field: "targetActorId"
+    });
+  }
+
+  return {
+    action,
+    targetActorId,
+    reason: optionalString(input, "reason", null),
+    metadata: optionalObject(input, "metadata", {})
+  };
+}
+
+function parseTaskState(value, { field = "state", fallback = "open" } = {}) {
+  const state = String(value == null ? fallback : value).trim().toLowerCase();
+  if (!TASK_STATE_VALUES.has(state)) {
+    throw new AppError("ERR_INVALID_ENUM", `${field} must be one of open|active|done`, {
+      field,
+      allowed: [...TASK_STATE_VALUES]
+    });
+  }
+  return state;
+}
+
+function parseTaskProgress(value, { field = "progress", fallback = 0 } = {}) {
+  const number = value == null || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(number)) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be a number between 0 and 100`, {
+      field,
+      min: 0,
+      max: 100,
+      value
+    });
+  }
+  const rounded = Math.round(number);
+  if (rounded < 0 || rounded > 100) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be a number between 0 and 100`, {
+      field,
+      min: 0,
+      max: 100,
+      value: rounded
+    });
+  }
+  return rounded;
+}
+
+function sanitizeTaskPatch(input) {
+  const allowed = ["title", "description", "state", "assigneeActorId", "progress", "metadata"];
+  const out = {};
+  for (const key of allowed) {
+    if (key in input) {
+      out[key] = input[key];
+    }
+  }
+  return out;
+}
+
+function validateTaskInput(input, { partial = false } = {}) {
+  const out = {};
+
+  if (!partial || "title" in input) {
+    const title = optionalString(input, "title", null);
+    if (title == null || !title.trim()) {
+      throw new AppError("ERR_MISSING_FIELD", "Missing required field: title", {
+        field: "title"
+      });
+    }
+    out.title = title.trim();
+  }
+
+  if (!partial || "description" in input) {
+    out.description = optionalString(input, "description", null);
+  }
+
+  if (!partial || "state" in input) {
+    out.state = parseTaskState(input.state, { field: "state", fallback: "open" });
+  }
+
+  if (!partial || "assigneeActorId" in input) {
+    out.assigneeActorId = optionalString(input, "assigneeActorId", null);
+  }
+
+  if (!partial || "progress" in input) {
+    out.progress = parseTaskProgress(input.progress, { field: "progress", fallback: 0 });
+  }
+
+  if (!partial || "metadata" in input) {
+    out.metadata = optionalObject(input, "metadata", {});
+  }
+
+  if (partial && Object.keys(out).length === 0) {
+    throw new AppError("ERR_VALIDATION", "At least one task field must be provided", {
+      fields: ["title", "description", "state", "assigneeActorId", "progress", "metadata"]
+    });
+  }
+
+  return out;
+}
+
+function parseSharedObjectType(value, { field = "objectType", fallback = "note" } = {}) {
+  const objectType = String(value == null ? fallback : value).trim().toLowerCase();
+  if (!OBJECT_TYPE_VALUES.has(objectType)) {
+    throw new AppError(
+      "ERR_INVALID_ENUM",
+      `${field} must be one of whiteboard|note|token`,
+      {
+        field,
+        allowed: [...OBJECT_TYPE_VALUES]
+      }
+    );
+  }
+  return objectType;
+}
+
+function parseSharedObjectQuantity(value, { field = "quantity", fallback = null } = {}) {
+  if (value == null || value === "") {
+    return fallback;
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be an integer >= 0`, {
+      field,
+      min: 0,
+      value
+    });
+  }
+  const rounded = Math.round(number);
+  if (rounded < 0) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be an integer >= 0`, {
+      field,
+      min: 0,
+      value: rounded
+    });
+  }
+  return rounded;
+}
+
+function sanitizeSharedObjectPatch(input) {
+  const allowed = ["objectType", "objectKey", "title", "content", "data", "quantity", "metadata"];
+  const out = {};
+  for (const key of allowed) {
+    if (key in input) {
+      out[key] = input[key];
+    }
+  }
+  return out;
+}
+
+function validateSharedObjectInput(input, { partial = false } = {}) {
+  const out = {};
+
+  if (!partial || "objectType" in input) {
+    out.objectType = parseSharedObjectType(input.objectType, {
+      field: "objectType",
+      fallback: "note"
+    });
+  }
+
+  if (!partial || "objectKey" in input) {
+    out.objectKey = optionalString(input, "objectKey", null);
+  }
+
+  if (!partial || "title" in input) {
+    out.title = optionalString(input, "title", null);
+  }
+
+  if (!partial || "content" in input) {
+    out.content = optionalString(input, "content", null);
+  }
+
+  if (!partial || "data" in input) {
+    out.data = optionalObject(input, "data", {});
+  }
+
+  if (!partial || "quantity" in input) {
+    out.quantity = parseSharedObjectQuantity(input.quantity, {
+      field: "quantity",
+      fallback: null
+    });
+  }
+
+  if (!partial || "metadata" in input) {
+    out.metadata = optionalObject(input, "metadata", {});
+  }
+
+  if (!partial && out.objectType === "token" && out.quantity == null) {
+    out.quantity = 0;
+  }
+
+  if (partial && Object.keys(out).length === 0) {
+    throw new AppError("ERR_VALIDATION", "At least one shared object field must be provided", {
+      fields: ["objectType", "objectKey", "title", "content", "data", "quantity", "metadata"]
+    });
+  }
+
   return out;
 }
 
@@ -243,6 +542,20 @@ function parseBool(value, fallback = undefined) {
   return fallback;
 }
 
+function parseIsoQuery(value, { field }) {
+  if (value == null || value === "") {
+    return null;
+  }
+  const parsed = Date.parse(String(value));
+  if (!Number.isFinite(parsed)) {
+    throw new AppError("ERR_VALIDATION", `${field} must be a valid ISO-8601 timestamp`, {
+      field,
+      value
+    });
+  }
+  return new Date(parsed).toISOString();
+}
+
 function writeSseEvent(res, { type, data, id }) {
   if (id != null) {
     res.write(`id: ${id}\n`);
@@ -267,6 +580,9 @@ function mutatingRoute(pathname, method) {
     pathname === "/v1/presence/heartbeat" ||
     pathname === "/v1/rooms/context/pin" ||
     pathname === "/v1/permissions" ||
+    pathname === "/v1/operator/overrides" ||
+    pathname === "/v1/tasks" ||
+    pathname === "/v1/objects" ||
     pathname === "/v1/profiles" ||
     pathname === "/v1/reactions/subscriptions" ||
     pathname === "/v1/subscriptions"
@@ -276,6 +592,8 @@ function mutatingRoute(pathname, method) {
   if (
     pathname.startsWith("/v1/subscriptions/") ||
     pathname.startsWith("/v1/reactions/subscriptions/") ||
+    pathname.startsWith("/v1/tasks/") ||
+    pathname.startsWith("/v1/objects/") ||
     pathname.startsWith("/v1/profiles/")
   ) {
     return true;
@@ -304,8 +622,8 @@ function sendError(res, requestId, error, rateHeaders = {}) {
 function buildPayload(type, body) {
   if (type === EVENT_TYPES.MOVE) {
     return {
-      direction: requireString(body, "direction"),
-      steps: Number(body.steps || 1),
+      direction: parseMoveDirection(requireString(body, "direction"), { field: "direction" }),
+      steps: parseBoundedSteps(body.steps, { field: "steps", min: 1, max: 50, fallback: 1 }),
       intent: optionalString(body, "intent")
     };
   }
@@ -407,6 +725,40 @@ async function enforceCapability({
   }
 }
 
+async function enforceOperatorOverrides({
+  tenantId,
+  roomId,
+  actorId,
+  action,
+  traceCorrelationId = null
+}) {
+  const state = await operatorOverrideStore.getRoomState({ tenantId, roomId });
+  const decision = evaluateOperatorBlock(state, { actorId, action });
+  if (!decision.blocked) {
+    return;
+  }
+  if (traceCorrelationId) {
+    traces.step(traceCorrelationId, REASON_CODES.RC_OPERATOR_OVERRIDE_BLOCKED, {
+      reasonCode: decision.reasonCode,
+      ...decision.details
+    });
+  }
+  throw new AppError(
+    "ERR_OPERATOR_OVERRIDE_BLOCKED",
+    "Action blocked by active operator override",
+    {
+      tenantId,
+      roomId,
+      actorId,
+      action,
+      reasonCode: decision.reasonCode,
+      ...decision.details,
+      correlationId: traceCorrelationId
+    },
+    423
+  );
+}
+
 function enforceModeration({
   tenantId,
   roomId,
@@ -494,6 +846,13 @@ async function handleCommand(req, res, url, requestId, rateHeaders) {
       roomId,
       actorId,
       capability: capabilityForEventType(route.type),
+      action: route.action,
+      traceCorrelationId: trace.correlationId
+    });
+    await enforceOperatorOverrides({
+      tenantId,
+      roomId,
+      actorId,
       action: route.action,
       traceCorrelationId: trace.correlationId
     });
@@ -646,6 +1005,13 @@ async function handleIntent(req, res, url, requestId, rateHeaders) {
       roomId,
       actorId,
       capability: "canMove",
+      action: intent,
+      traceCorrelationId: trace.correlationId
+    });
+    await enforceOperatorOverrides({
+      tenantId,
+      roomId,
+      actorId,
       action: intent,
       traceCorrelationId: trace.correlationId
     });
@@ -1209,6 +1575,34 @@ async function handleLocalMemory(req, res, url, requestId, rateHeaders) {
     } else if (event.type === EVENT_TYPES.INTENT_COMPLETED) {
       out.intent = event.payload?.intent || null;
       out.outcome = event.payload?.outcome || null;
+    } else if (event.type === EVENT_TYPES.OPERATOR_OVERRIDE_APPLIED) {
+      out.action = event.payload?.action || null;
+      out.targetActorId = event.payload?.targetActorId || null;
+      out.reason = event.payload?.reason || null;
+    } else if (event.type === EVENT_TYPES.TASK_CREATED || event.type === EVENT_TYPES.TASK_UPDATED) {
+      out.taskId = event.payload?.taskId || null;
+      out.state = event.payload?.state || null;
+      out.progress = Number(event.payload?.progress || 0);
+    } else if (event.type === EVENT_TYPES.TASK_ASSIGNED) {
+      out.taskId = event.payload?.taskId || null;
+      out.fromAssigneeActorId = event.payload?.fromAssigneeActorId || null;
+      out.toAssigneeActorId = event.payload?.toAssigneeActorId || null;
+    } else if (event.type === EVENT_TYPES.TASK_PROGRESS_UPDATED) {
+      out.taskId = event.payload?.taskId || null;
+      out.fromProgress = Number(event.payload?.fromProgress || 0);
+      out.toProgress = Number(event.payload?.toProgress || 0);
+    } else if (event.type === EVENT_TYPES.TASK_COMPLETED) {
+      out.taskId = event.payload?.taskId || null;
+      out.completedBy = event.payload?.completedBy || null;
+    } else if (
+      event.type === EVENT_TYPES.SHARED_OBJECT_CREATED ||
+      event.type === EVENT_TYPES.SHARED_OBJECT_UPDATED
+    ) {
+      out.objectId = event.payload?.objectId || null;
+      out.objectType = event.payload?.objectType || null;
+      out.objectKey = event.payload?.objectKey || null;
+      out.version = Number(event.payload?.version || 1);
+      out.changedFields = Array.isArray(event.payload?.changedFields) ? event.payload.changedFields : [];
     }
     return out;
   });
@@ -1224,6 +1618,47 @@ async function handleLocalMemory(req, res, url, requestId, rateHeaders) {
         actorId: actorId || null,
         memory,
         count: memory.length
+      }
+    },
+    {
+      "x-request-id": requestId,
+      ...rateHeaders
+    }
+  );
+}
+
+async function handleCollaborationScore(req, res, url, requestId, rateHeaders) {
+  const tenantId = url.searchParams.get("tenantId") || "default";
+  const roomId = url.searchParams.get("roomId") || "main";
+  const fromTs = parseIsoQuery(url.searchParams.get("fromTs"), { field: "fromTs" });
+  const toTs = parseIsoQuery(url.searchParams.get("toTs"), { field: "toTs" });
+  const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") || 5000), 10000));
+
+  const events = await eventStore.list({
+    tenantId,
+    roomId,
+    fromTs: fromTs || undefined,
+    toTs: toTs || undefined,
+    limit,
+    types: COLLABORATION_SCORE_EVENT_TYPES,
+    order: "asc"
+  });
+  const collaboration = calculateCollaborationScore(events);
+
+  return json(
+    res,
+    200,
+    {
+      ok: true,
+      data: {
+        tenantId,
+        roomId,
+        window: {
+          fromTs,
+          toTs
+        },
+        eventsConsidered: events.length,
+        collaboration
       }
     },
     {
@@ -1754,6 +2189,284 @@ function handleTraceLookup(req, res, url, requestId, rateHeaders) {
   );
 }
 
+async function handleOperatorAudit(req, res, url, requestId, rateHeaders) {
+  if (req.method !== "GET") {
+    throw new AppError("ERR_UNSUPPORTED_ACTION", "Operator audit route not found", {
+      method: req.method,
+      path: url.pathname
+    }, 404);
+  }
+
+  const tenantId = url.searchParams.get("tenantId") || "default";
+  const roomId = url.searchParams.get("roomId") || undefined;
+  const operatorId = url.searchParams.get("operatorId") || undefined;
+  const action = url.searchParams.get("action") || undefined;
+  const fromTs = url.searchParams.get("fromTs") || undefined;
+  const toTs = url.searchParams.get("toTs") || undefined;
+  const cursor = url.searchParams.get("cursor") || undefined;
+  const limit = Number(url.searchParams.get("limit") || 100);
+  const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
+
+  const entries = await operatorAuditStore.list({
+    tenantId,
+    roomId,
+    operatorId,
+    action,
+    fromTs,
+    toTs,
+    cursor,
+    limit,
+    order
+  });
+
+  const nextCursor = entries.length ? entries[entries.length - 1].auditSeq : Number(cursor || 0);
+  return json(
+    res,
+    200,
+    {
+      ok: true,
+      data: {
+        entries,
+        count: entries.length,
+        nextCursor,
+        order
+      }
+    },
+    {
+      "x-request-id": requestId,
+      ...rateHeaders
+    }
+  );
+}
+
+async function handleOperatorOverrides(req, res, url, requestId, rateHeaders) {
+  if (req.method === "GET") {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const roomId = url.searchParams.get("roomId") || undefined;
+    const limit = Number(url.searchParams.get("limit") || 200);
+    if (roomId) {
+      const state = await operatorOverrideStore.getRoomState({ tenantId, roomId });
+      return json(
+        res,
+        200,
+        {
+          ok: true,
+          data: {
+            override: state
+          }
+        },
+        {
+          "x-request-id": requestId,
+          ...rateHeaders
+        }
+      );
+    }
+
+    const overrides = await operatorOverrideStore.list({
+      tenantId,
+      limit
+    });
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          overrides,
+          count: overrides.length
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  if (req.method === "POST") {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", "default");
+    const roomId = requireString(body, "roomId");
+    const operatorId = requireString(body, "operatorId");
+    const validated = validateOperatorOverrideInput(body);
+
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId,
+      actorId: operatorId
+    });
+
+    try {
+      const scope = `${tenantId}:${roomId}:operator-overrides:${validated.action}:${validated.targetActorId || "-"}`;
+      const idempotent = idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceCapability({
+        tenantId,
+        roomId,
+        actorId: operatorId,
+        capability: "canModerate",
+        action: validated.action,
+        traceCorrelationId: trace.correlationId
+      });
+
+      const applied = await operatorOverrideStore.applyAction({
+        tenantId,
+        roomId,
+        operatorId,
+        action: validated.action,
+        targetActorId: validated.targetActorId,
+        reason: validated.reason,
+        metadata: validated.metadata
+      });
+
+      const emitted = [];
+      const auditEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId,
+          actorId: operatorId,
+          type: EVENT_TYPES.OPERATOR_OVERRIDE_APPLIED,
+          payload: {
+            action: validated.action,
+            targetActorId: validated.targetActorId,
+            reason: validated.reason,
+            metadata: validated.metadata,
+            overrideState: {
+              roomPaused: applied.state.roomPaused,
+              pausedBy: applied.state.pausedBy,
+              mutedActorIds: applied.state.mutedActorIds
+            }
+          },
+          correlationId: trace.correlationId
+        })
+      );
+      emitted.push(auditEvent);
+      const auditLogEntry = await operatorAuditStore.append({
+        tenantId,
+        roomId,
+        operatorId,
+        action: validated.action,
+        targetActorId: validated.targetActorId,
+        reason: validated.reason,
+        metadata: validated.metadata,
+        correlationId: trace.correlationId,
+        requestId,
+        outcome: "applied",
+        eventId: auditEvent.eventId
+      });
+
+      if (validated.action === OPERATOR_ACTIONS.FORCE_LEAVE && validated.targetActorId) {
+        const leaveEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId,
+            actorId: validated.targetActorId,
+            type: EVENT_TYPES.LEAVE,
+            payload: {
+              forced: true,
+              operatorId,
+              reason: validated.reason
+            },
+            correlationId: trace.correlationId,
+            causationId: auditEvent.eventId
+          })
+        );
+        emitted.push(leaveEvent);
+
+        const inactivated = await presenceStore.setInactive({
+          tenantId,
+          roomId,
+          actorId: validated.targetActorId
+        });
+        if (inactivated?.statusChanged) {
+          const statusEvent = await eventStore.append(
+            createEvent({
+              tenantId,
+              roomId,
+              actorId: validated.targetActorId,
+              type: EVENT_TYPES.STATUS_CHANGED,
+              payload: {
+                from: inactivated.previousStatus,
+                to: "inactive",
+                reason: "operator_force_leave",
+                operatorId
+              },
+              correlationId: trace.correlationId,
+              causationId: leaveEvent.eventId
+            })
+          );
+          emitted.push(statusEvent);
+        }
+      }
+
+      const response = {
+        ok: true,
+        data: {
+          override: applied.state,
+          action: applied.action,
+          audit: auditLogEntry,
+          emittedEvents: emitted.map((item) => ({
+            eventId: item.eventId,
+            sequence: item.sequence,
+            eventType: item.type
+          })),
+          correlationId: trace.correlationId
+        }
+      };
+
+      idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 202,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 202, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "operator_overrides"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError("ERR_UNSUPPORTED_ACTION", "Operator overrides route not found", {
+    method: req.method,
+    path: url.pathname
+  }, 404);
+}
+
 function sanitizeSubscriptionPatch(patch) {
   const allowed = [
     "roomId",
@@ -1929,8 +2642,9 @@ function validateProfileInput(input, { partial = false } = {}) {
           throw new Error("invalid protocol");
         }
       } catch {
-        throw new AppError("ERR_VALIDATION", "avatarUrl must be a valid http/https URL", {
-          field: "avatarUrl"
+        throw new AppError("ERR_INVALID_URL", "avatarUrl must be a valid http/https URL", {
+          field: "avatarUrl",
+          value: avatarUrl
         });
       }
     }
@@ -2189,6 +2903,720 @@ async function handleProfiles(req, res, url, requestId, rateHeaders) {
   }, 404);
 }
 
+async function handleSharedObjects(req, res, url, requestId, rateHeaders) {
+  if (req.method === "GET" && url.pathname === "/v1/objects") {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const roomId = url.searchParams.get("roomId") || undefined;
+    const objectTypeParam = url.searchParams.get("objectType") || undefined;
+    const objectType = objectTypeParam
+      ? parseSharedObjectType(objectTypeParam, { field: "objectType" })
+      : undefined;
+    const objectKey = url.searchParams.get("objectKey") || undefined;
+    const createdBy = url.searchParams.get("createdBy") || undefined;
+    const updatedBy = url.searchParams.get("updatedBy") || undefined;
+    const limit = Number(url.searchParams.get("limit") || 200);
+    const objects = await sharedObjectStore.list({
+      tenantId,
+      roomId,
+      objectType,
+      objectKey,
+      createdBy,
+      updatedBy,
+      limit
+    });
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          objects,
+          count: objects.length
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  const match = url.pathname.match(/^\/v1\/objects\/([^/]+)$/);
+  if (req.method === "GET" && match) {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const objectId = decodeURIComponent(match[1]);
+    const object = await sharedObjectStore.get({ tenantId, objectId });
+    if (!object) {
+      throw new AppError("ERR_NOT_FOUND", "Shared object not found", {
+        tenantId,
+        objectId
+      }, 404);
+    }
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          object
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/objects") {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", "default");
+    const roomId = optionalString(body, "roomId", "main");
+    const actorId = requireString(body, "actorId");
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:${roomId}:objects:create:${actorId}`;
+      const idempotent = idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceOperatorOverrides({
+        tenantId,
+        roomId,
+        actorId,
+        action: "object_create",
+        traceCorrelationId: trace.correlationId
+      });
+
+      const validated = validateSharedObjectInput(body);
+      const object = await sharedObjectStore.create({
+        tenantId,
+        roomId,
+        actorId,
+        ...validated
+      });
+
+      const createdEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId: object.roomId,
+          actorId,
+          type: EVENT_TYPES.SHARED_OBJECT_CREATED,
+          payload: {
+            objectId: object.objectId,
+            objectType: object.objectType,
+            objectKey: object.objectKey,
+            title: object.title,
+            content: object.content,
+            data: object.data,
+            quantity: object.quantity,
+            metadata: object.metadata,
+            version: object.version,
+            createdBy: object.createdBy,
+            updatedBy: object.updatedBy,
+            createdAt: object.createdAt,
+            updatedAt: object.updatedAt
+          },
+          correlationId: trace.correlationId
+        })
+      );
+
+      const response = {
+        ok: true,
+        data: {
+          object,
+          emittedEvents: [
+            {
+              eventId: createdEvent.eventId,
+              sequence: createdEvent.sequence,
+              eventType: createdEvent.type
+            }
+          ],
+          correlationId: trace.correlationId
+        }
+      };
+      idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 201,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 201, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "shared_objects"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  if (req.method === "PATCH" && match) {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", url.searchParams.get("tenantId") || "default");
+    const objectId = decodeURIComponent(match[1]);
+    const actorId = requireString(body, "actorId");
+    const existing = await sharedObjectStore.get({ tenantId, objectId });
+    if (!existing) {
+      throw new AppError("ERR_NOT_FOUND", "Shared object not found", {
+        tenantId,
+        objectId
+      }, 404);
+    }
+
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId: existing.roomId,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:${existing.roomId}:objects:${objectId}:patch`;
+      const idempotent = idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceOperatorOverrides({
+        tenantId,
+        roomId: existing.roomId,
+        actorId,
+        action: "object_update",
+        traceCorrelationId: trace.correlationId
+      });
+
+      const patch = validateSharedObjectInput(sanitizeSharedObjectPatch(body), { partial: true });
+      const object = await sharedObjectStore.patch({
+        tenantId,
+        objectId,
+        actorId,
+        patch
+      });
+
+      const updatedEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId: existing.roomId,
+          actorId,
+          type: EVENT_TYPES.SHARED_OBJECT_UPDATED,
+          payload: {
+            objectId: object.objectId,
+            objectType: object.objectType,
+            objectKey: object.objectKey,
+            title: object.title,
+            content: object.content,
+            data: object.data,
+            quantity: object.quantity,
+            metadata: object.metadata,
+            version: object.version,
+            changedFields: Object.keys(patch),
+            createdBy: object.createdBy,
+            updatedBy: object.updatedBy,
+            createdAt: object.createdAt,
+            updatedAt: object.updatedAt
+          },
+          correlationId: trace.correlationId
+        })
+      );
+
+      const response = {
+        ok: true,
+        data: {
+          object,
+          emittedEvents: [
+            {
+              eventId: updatedEvent.eventId,
+              sequence: updatedEvent.sequence,
+              eventType: updatedEvent.type
+            }
+          ],
+          correlationId: trace.correlationId
+        }
+      };
+      idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 200,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 200, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "shared_objects"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError("ERR_UNSUPPORTED_ACTION", "Shared objects route not found", {
+    method: req.method,
+    path: url.pathname
+  }, 404);
+}
+
+async function handleTasks(req, res, url, requestId, rateHeaders) {
+  if (req.method === "GET" && url.pathname === "/v1/tasks") {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const roomId = url.searchParams.get("roomId") || undefined;
+    const stateParam = url.searchParams.get("state") || undefined;
+    const state = stateParam ? parseTaskState(stateParam, { field: "state" }) : undefined;
+    const assigneeActorId = url.searchParams.get("assigneeActorId") || undefined;
+    const createdBy = url.searchParams.get("createdBy") || undefined;
+    const limit = Number(url.searchParams.get("limit") || 200);
+    const tasks = await taskStore.list({
+      tenantId,
+      roomId,
+      state,
+      assigneeActorId,
+      createdBy,
+      limit
+    });
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          tasks,
+          count: tasks.length
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  const match = url.pathname.match(/^\/v1\/tasks\/([^/]+)$/);
+  if (req.method === "GET" && match) {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const taskId = decodeURIComponent(match[1]);
+    const task = await taskStore.get({ tenantId, taskId });
+    if (!task) {
+      throw new AppError("ERR_NOT_FOUND", "Task not found", {
+        tenantId,
+        taskId
+      }, 404);
+    }
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          task
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/tasks") {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", "default");
+    const roomId = optionalString(body, "roomId", "main");
+    const actorId = requireString(body, "actorId");
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:${roomId}:tasks:create:${actorId}`;
+      const idempotent = idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceOperatorOverrides({
+        tenantId,
+        roomId,
+        actorId,
+        action: "task_create",
+        traceCorrelationId: trace.correlationId
+      });
+      const validated = validateTaskInput(body);
+      if (!("state" in body) && validated.assigneeActorId) {
+        validated.state = "active";
+      }
+      if (validated.state === "done" && validated.progress < 100) {
+        validated.progress = 100;
+      }
+
+      const task = await taskStore.create({
+        tenantId,
+        roomId,
+        actorId,
+        ...validated
+      });
+
+      const emitted = [];
+      const createdEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId: task.roomId,
+          actorId,
+          type: EVENT_TYPES.TASK_CREATED,
+          payload: {
+            taskId: task.taskId,
+            title: task.title,
+            state: task.state,
+            assigneeActorId: task.assigneeActorId,
+            progress: task.progress,
+            createdBy: task.createdBy
+          },
+          correlationId: trace.correlationId
+        })
+      );
+      emitted.push(createdEvent);
+
+      if (task.assigneeActorId) {
+        const assignedEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: task.roomId,
+            actorId,
+            type: EVENT_TYPES.TASK_ASSIGNED,
+            payload: {
+              taskId: task.taskId,
+              fromAssigneeActorId: null,
+              toAssigneeActorId: task.assigneeActorId,
+              assignedBy: actorId
+            },
+            correlationId: trace.correlationId,
+            causationId: createdEvent.eventId
+          })
+        );
+        emitted.push(assignedEvent);
+      }
+
+      if (task.state === "done") {
+        const completedEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: task.roomId,
+            actorId,
+            type: EVENT_TYPES.TASK_COMPLETED,
+            payload: {
+              taskId: task.taskId,
+              completedBy: task.completedBy || actorId,
+              completedAt: task.completedAt,
+              progress: task.progress
+            },
+            correlationId: trace.correlationId,
+            causationId: createdEvent.eventId
+          })
+        );
+        emitted.push(completedEvent);
+      }
+
+      const response = {
+        ok: true,
+        data: {
+          task,
+          emittedEvents: emitted.map((item) => ({
+            eventId: item.eventId,
+            sequence: item.sequence,
+            eventType: item.type
+          })),
+          correlationId: trace.correlationId
+        }
+      };
+      idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 201,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 201, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "tasks"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  if (req.method === "PATCH" && match) {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", url.searchParams.get("tenantId") || "default");
+    const taskId = decodeURIComponent(match[1]);
+    const actorId = requireString(body, "actorId");
+    const existing = await taskStore.get({ tenantId, taskId });
+    if (!existing) {
+      throw new AppError("ERR_NOT_FOUND", "Task not found", {
+        tenantId,
+        taskId
+      }, 404);
+    }
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId: existing.roomId,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:${existing.roomId}:tasks:${taskId}:patch`;
+      const idempotent = idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceOperatorOverrides({
+        tenantId,
+        roomId: existing.roomId,
+        actorId,
+        action: "task_update",
+        traceCorrelationId: trace.correlationId
+      });
+      const patch = validateTaskInput(sanitizeTaskPatch(body), { partial: true });
+      if (patch.state === "done" && !("progress" in patch)) {
+        patch.progress = 100;
+      }
+      const task = await taskStore.patch({
+        tenantId,
+        taskId,
+        actorId,
+        patch
+      });
+
+      const emitted = [];
+      const updatedEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId: existing.roomId,
+          actorId,
+          type: EVENT_TYPES.TASK_UPDATED,
+          payload: {
+            taskId,
+            changedFields: Object.keys(patch),
+            state: task.state,
+            assigneeActorId: task.assigneeActorId,
+            progress: task.progress
+          },
+          correlationId: trace.correlationId
+        })
+      );
+      emitted.push(updatedEvent);
+
+      if (existing.assigneeActorId !== task.assigneeActorId) {
+        const assignedEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: existing.roomId,
+            actorId,
+            type: EVENT_TYPES.TASK_ASSIGNED,
+            payload: {
+              taskId,
+              fromAssigneeActorId: existing.assigneeActorId,
+              toAssigneeActorId: task.assigneeActorId,
+              assignedBy: actorId
+            },
+            correlationId: trace.correlationId,
+            causationId: updatedEvent.eventId
+          })
+        );
+        emitted.push(assignedEvent);
+      }
+
+      if (Number(existing.progress) !== Number(task.progress)) {
+        const progressEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: existing.roomId,
+            actorId,
+            type: EVENT_TYPES.TASK_PROGRESS_UPDATED,
+            payload: {
+              taskId,
+              fromProgress: existing.progress,
+              toProgress: task.progress
+            },
+            correlationId: trace.correlationId,
+            causationId: updatedEvent.eventId
+          })
+        );
+        emitted.push(progressEvent);
+      }
+
+      if (existing.state !== "done" && task.state === "done") {
+        const completedEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: existing.roomId,
+            actorId,
+            type: EVENT_TYPES.TASK_COMPLETED,
+            payload: {
+              taskId,
+              completedBy: task.completedBy || actorId,
+              completedAt: task.completedAt,
+              progress: task.progress
+            },
+            correlationId: trace.correlationId,
+            causationId: updatedEvent.eventId
+          })
+        );
+        emitted.push(completedEvent);
+      }
+
+      const response = {
+        ok: true,
+        data: {
+          task,
+          emittedEvents: emitted.map((item) => ({
+            eventId: item.eventId,
+            sequence: item.sequence,
+            eventType: item.type
+          })),
+          correlationId: trace.correlationId
+        }
+      };
+      idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 200,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 200, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "tasks"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError("ERR_UNSUPPORTED_ACTION", "Tasks route not found", {
+    method: req.method,
+    path: url.pathname
+  }, 404);
+}
+
 function sanitizeReactionPatch(patch) {
   const allowed = [
     "roomId",
@@ -2246,8 +3674,9 @@ function validateReactionInput(input, { partial = false, currentActionType = nul
   const actionType = ("actionType" in input ? optionalString(input, "actionType") : currentActionType) || null;
   if (!partial || "actionType" in input) {
     if (!["say", "move", "order"].includes(actionType || "")) {
-      throw new AppError("ERR_VALIDATION", "actionType must be one of say|move|order", {
-        field: "actionType"
+      throw new AppError("ERR_INVALID_ENUM", "actionType must be one of say|move|order", {
+        field: "actionType",
+        allowed: ["say", "move", "order"]
       });
     }
     out.actionType = actionType;
@@ -2273,15 +3702,15 @@ function validateReactionInput(input, { partial = false, currentActionType = nul
         ttlMs: Math.max(2000, Math.min(30000, Number(payload.ttlMs || 7000)))
       };
     } else if (chosenAction === "move") {
-      const direction = String(payload.direction || "").toUpperCase();
-      if (!["N", "S", "E", "W"].includes(direction)) {
-        throw new AppError("ERR_VALIDATION", "move action requires direction in N|S|E|W", {
-          field: "actionPayload.direction"
-        });
-      }
+      const direction = parseMoveDirection(payload.direction, { field: "actionPayload.direction" });
       out.actionPayload = {
         direction,
-        steps: Math.max(1, Number(payload.steps || 1))
+        steps: parseBoundedSteps(payload.steps, {
+          field: "actionPayload.steps",
+          min: 1,
+          max: 50,
+          fallback: 1
+        })
       };
     } else if (chosenAction === "order") {
       const itemId = typeof payload.itemId === "string" ? payload.itemId.trim() : "";
@@ -2534,9 +3963,9 @@ function validateSubscriptionInput(input, { partial = false } = {}) {
         throw new Error("invalid protocol");
       }
     } catch {
-      throw new AppError("ERR_VALIDATION", "targetUrl must be a valid http/https URL", {
+      throw new AppError("ERR_INVALID_URL", "targetUrl must be a valid http/https URL", {
         field: "targetUrl",
-        code: "ERR_INVALID_TARGET_URL"
+        value: targetUrl
       });
     }
     payload.targetUrl = targetUrl;
@@ -2937,8 +4366,12 @@ const server = http.createServer(async (req, res) => {
             eventStore: pgPool ? "postgres" : "file",
             subscriptions: pgPool ? "postgres" : "file",
             permissions: pgPool ? "postgres" : "file",
+            operatorOverrides: pgPool ? "postgres" : "file",
+            operatorAudit: pgPool ? "postgres" : "file",
             presence: pgPool ? "postgres" : "file",
             profiles: pgPool ? "postgres" : "file",
+            tasks: pgPool ? "postgres" : "file",
+            sharedObjects: pgPool ? "postgres" : "file",
             reactions: pgPool ? "postgres" : "file",
             roomContext: pgPool ? "postgres" : "file"
           },
@@ -2979,6 +4412,10 @@ const server = http.createServer(async (req, res) => {
       return await handleLocalMemory(req, res, url, requestId, rateHeaders);
     }
 
+    if (req.method === "GET" && url.pathname === "/v1/collaboration/score") {
+      return await handleCollaborationScore(req, res, url, requestId, rateHeaders);
+    }
+
     if (req.method === "GET" && url.pathname === "/v1/presence") {
       return await handlePresenceRead(req, res, url, requestId, rateHeaders);
     }
@@ -3006,6 +4443,14 @@ const server = http.createServer(async (req, res) => {
       return handleTraceLookup(req, res, url, requestId, rateHeaders);
     }
 
+    if (url.pathname === "/v1/operator/audit") {
+      return await handleOperatorAudit(req, res, url, requestId, rateHeaders);
+    }
+
+    if (url.pathname === "/v1/operator/overrides") {
+      return await handleOperatorOverrides(req, res, url, requestId, rateHeaders);
+    }
+
     if (req.method === "GET" && url.pathname === "/v1/snapshots/room") {
       return await handleSnapshotRead(req, res, url, requestId, rateHeaders, "room");
     }
@@ -3016,6 +4461,14 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/v1/permissions") {
       return await handlePermissions(req, res, url, requestId, rateHeaders);
+    }
+
+    if (url.pathname === "/v1/tasks" || /^\/v1\/tasks\/.+/.test(url.pathname)) {
+      return await handleTasks(req, res, url, requestId, rateHeaders);
+    }
+
+    if (url.pathname === "/v1/objects" || /^\/v1\/objects\/.+/.test(url.pathname)) {
+      return await handleSharedObjects(req, res, url, requestId, rateHeaders);
     }
 
     if (url.pathname === "/v1/profiles" || /^\/v1\/profiles\/.+/.test(url.pathname)) {

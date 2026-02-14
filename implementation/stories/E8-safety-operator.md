@@ -23,19 +23,21 @@ Acceptance criteria:
 - Policy rules trigger deterministic mitigations.
 
 ## ACF-803 Operator override panel
-Status: TODO
+Status: DONE
 
 Scope:
-- Pause room, mute agent, force leave, pin emergency context.
+- Pause room, mute/unmute agent, force leave.
+- Runtime API: `GET/POST /v1/operator/overrides`.
 
 Acceptance criteria:
 - Operator actions apply immediately and emit audit events.
 
 ## ACF-804 Operator audit trail
-Status: TODO
+Status: DONE
 
 Scope:
 - Immutable record of admin operations.
+- API: `GET /v1/operator/audit` with room/operator/time filters.
 
 Acceptance criteria:
 - Audit data queryable by room and time.

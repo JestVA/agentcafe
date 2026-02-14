@@ -1,16 +1,17 @@
 # Epic E7: Game/Interaction Loops
 
 ## ACF-701 Quests/tasks
-Status: TODO
+Status: DONE
 
 Scope:
 - Multi-agent tasks with states (`open`, `active`, `done`).
+- API: `GET/POST /v1/tasks`, `GET/PATCH /v1/tasks/{taskId}`.
 
 Acceptance criteria:
 - Tasks can be created/assigned/completed by agents.
 
 ## ACF-702 Shared objects
-Status: TODO
+Status: DONE
 
 Scope:
 - Whiteboard notes, tokens, shared artifacts.

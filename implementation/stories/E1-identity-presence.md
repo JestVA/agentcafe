@@ -34,10 +34,11 @@ Acceptance criteria:
 - Query returns consistent last-seen timestamps.
 
 ## ACF-104 Presence event schema stabilization
-Status: TODO
+Status: DONE
 
 Scope:
 - Normalize `agent_entered`, `agent_left`, `status_changed` payloads.
+- Enforce normalization/validation in shared event factory.
 
 Acceptance criteria:
 - Event schema documented and validated.

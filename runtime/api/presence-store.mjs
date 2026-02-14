@@ -123,4 +123,33 @@ export class FilePresenceStore {
     }
     return expired;
   }
+
+  async setInactive({ tenantId, roomId, actorId, nowIso = new Date().toISOString() }) {
+    const k = key(tenantId, roomId, actorId);
+    const existing = this.data.states[k] || null;
+    if (!existing) {
+      return null;
+    }
+    if (existing.status === "inactive" && existing.isActive === false) {
+      return {
+        state: clone(existing),
+        previousStatus: "inactive",
+        statusChanged: false
+      };
+    }
+    const previousStatus = existing.status || null;
+    const next = {
+      ...existing,
+      status: "inactive",
+      isActive: false,
+      updatedAt: nowIso
+    };
+    this.data.states[k] = next;
+    await this.persist();
+    return {
+      state: clone(next),
+      previousStatus,
+      statusChanged: previousStatus !== "inactive"
+    };
+  }
 }

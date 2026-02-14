@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { createEvent, EVENT_TYPES } from "../shared/events.mjs";
 import { InMemoryEventStore } from "../api/event-store.mjs";
+import { FileOperatorOverrideStore } from "../api/operator-override-store.mjs";
+import { OPERATOR_ACTIONS } from "../api/operator-policy.mjs";
 import { FilePermissionStore } from "../api/permission-store.mjs";
 import { ModerationPolicy, MODERATION_REASON_CODES } from "../api/moderation-policy.mjs";
 import { ReactionEngine } from "../api/reaction-engine.mjs";
@@ -164,7 +166,9 @@ test("ACF-802 reaction engine respects moderation policy", async () => {
 
     const done = await waitFor(async () => {
       const row = await reactionStore.getById(sub.id);
-      return Boolean(row?.lastSourceEventId === source1.eventId && row?.errorCount > 0);
+      return Boolean(
+        row?.triggerCount === 1 && row?.errorCount > 0 && row?.lastSourceEventId === source2.eventId
+      );
     });
     assert.equal(done, true);
 
@@ -184,6 +188,72 @@ test("ACF-802 reaction engine respects moderation policy", async () => {
         String(latestSub?.lastError || "").includes(code)
       )
     );
+  } finally {
+    engine.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ACF-803 reaction engine respects room pause override", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "agentcafe-react-ops-"));
+  const reactionFile = path.join(dir, "reactions.json");
+  const permFile = path.join(dir, "permissions.json");
+  const overrideFile = path.join(dir, "operator-overrides.json");
+  const eventStore = new InMemoryEventStore();
+  const reactionStore = new FileReactionStore({ filePath: reactionFile });
+  const permissionStore = new FilePermissionStore({ filePath: permFile });
+  const operatorOverrideStore = new FileOperatorOverrideStore({ filePath: overrideFile });
+  const engine = new ReactionEngine({
+    eventStore,
+    reactionStore,
+    permissionStore,
+    operatorOverrideStore,
+    maxConcurrency: 1
+  });
+
+  try {
+    await reactionStore.init();
+    await permissionStore.init();
+    await operatorOverrideStore.init();
+
+    await operatorOverrideStore.applyAction({
+      tenantId: "default",
+      roomId: "main",
+      operatorId: "ops",
+      action: OPERATOR_ACTIONS.PAUSE_ROOM,
+      reason: "maintenance"
+    });
+
+    engine.start();
+    const sub = await reactionStore.create({
+      tenantId: "default",
+      roomId: "main",
+      targetActorId: "Kai",
+      triggerEventTypes: [EVENT_TYPES.ORDER],
+      actionType: "say",
+      actionPayload: { text: "I saw your order." },
+      cooldownMs: 0
+    });
+
+    const source = eventStore.append(
+      createEvent({
+        tenantId: "default",
+        roomId: "main",
+        actorId: "Nova",
+        type: EVENT_TYPES.ORDER,
+        payload: { itemId: "latte", size: "regular" }
+      })
+    );
+
+    const blocked = await waitFor(async () => {
+      const row = await reactionStore.getById(sub.id);
+      return Boolean(row?.lastSourceEventId === source.eventId && String(row?.lastError || "").includes("operator_override:ROOM_PAUSED"));
+    });
+    assert.equal(blocked, true);
+
+    const events = eventStore.list({ tenantId: "default", roomId: "main", order: "asc", limit: 100 });
+    const reactions = events.filter((item) => item.actorId === "Kai" && item.type === EVENT_TYPES.CONVERSATION_MESSAGE);
+    assert.equal(reactions.length, 0);
   } finally {
     engine.stop();
     await rm(dir, { recursive: true, force: true });

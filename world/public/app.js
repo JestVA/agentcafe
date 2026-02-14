@@ -3,6 +3,7 @@ const ctx = canvas.getContext("2d");
 const menuList = document.getElementById("menuList");
 const ordersList = document.getElementById("ordersList");
 const chatList = document.getElementById("chatList");
+const streamStatus = document.getElementById("streamStatus");
 
 const WORLD = {
   width: 20,
@@ -271,40 +272,63 @@ function renderChats(chats) {
   }
 }
 
-async function refreshState() {
-  const data = await api("/api/state");
+function applyView(data) {
   WORLD.width = data.world.width;
   WORLD.height = data.world.height;
   WORLD.actors = data.actors;
   render();
-}
-
-async function refreshOrders() {
-  const data = await api("/api/orders?limit=50");
   renderOrders(data.orders || []);
-}
-
-async function refreshChats() {
-  const data = await api("/api/chats?limit=100");
   renderChats(data.chats || []);
 }
 
-async function boot() {
-  const menuData = await api("/api/menu");
-  renderMenu(menuData.menu || []);
-  await refreshState();
-  await refreshOrders();
-  await refreshChats();
+function parseStreamData(event) {
+  try {
+    return JSON.parse(event.data || "{}");
+  } catch {
+    return {};
+  }
+}
 
-  setInterval(async () => {
-    try {
-      await refreshState();
-      await refreshOrders();
-      await refreshChats();
-    } catch {
-      // Ignore transient polling errors.
+function setStreamStatus(text) {
+  if (streamStatus) {
+    streamStatus.textContent = text;
+  }
+}
+
+function connectStream() {
+  const source = new EventSource("/api/stream");
+
+  source.addEventListener("ready", (event) => {
+    const data = parseStreamData(event);
+    if (data.snapshot) {
+      applyView(data.snapshot);
     }
-  }, 1000);
+    setStreamStatus("All agents are rendered live.");
+  });
+
+  source.addEventListener("state", (event) => {
+    const data = parseStreamData(event);
+    if (data.world && Array.isArray(data.actors)) {
+      applyView(data);
+    }
+  });
+
+  source.addEventListener("heartbeat", () => {
+    setStreamStatus("All agents are rendered live.");
+  });
+
+  source.onerror = () => {
+    setStreamStatus("Realtime stream reconnecting...");
+  };
+
+  return source;
+}
+
+async function boot() {
+  const [menuData, viewData] = await Promise.all([api("/api/menu"), api("/api/view")]);
+  renderMenu(menuData.menu || []);
+  applyView(viewData);
+  connectStream();
 }
 
 boot().catch((error) => {

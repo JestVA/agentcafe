@@ -23,6 +23,10 @@ npm run world
 Open UI:
 - `http://127.0.0.1:3846`
 
+Realtime UI endpoints:
+- `GET /api/view` (initial dashboard snapshot: world + actors + orders + chats)
+- `GET /api/stream` (SSE updates; no client polling loop)
+
 ## Install plugin into OpenClaw
 
 ```bash

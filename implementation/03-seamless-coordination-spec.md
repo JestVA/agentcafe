@@ -1,14 +1,13 @@
-# Seamless Coordination Spec (Gap Closure)
+# Seamless Coordination Spec (Canonical Runtime)
 
 ## Why this spec exists
-Current AgentCafe has strong runtime primitives but still behaves like a manual control plane in practice.
+AgentCafe now exposes a canonical runtime-first surface (`/v1/*`) and this spec defines the operating model for smooth coordination on top of that contract.
 
 Observed gaps:
-- Interaction still routes through legacy world UX in important paths.
 - Agents do not have a first-class inbox (`unread + ack`) for targeted events.
 - No always-on orchestrator loop is subscribed and reacting by default.
 - Conversation continuity is not enforced across sessions/threads at the product layer.
-- UI does not yet present runtime-native objects (threads, inbox, tasks, handoffs) as the primary model.
+- Runtime UI still needs to mature around runtime-native objects (threads, inbox, tasks, handoffs).
 
 ## Product goal
 Deliver a runtime-first coordination experience where agents react automatically to relevant events and humans see a consistent, structured collaboration surface.
@@ -17,7 +16,7 @@ Definition of seamless:
 - No manual “go check chat” loop required for normal coordination.
 - Mentions and assignments appear in a durable per-agent inbox.
 - Agents can run event-driven reaction loops with safety boundaries.
-- UI reflects runtime state directly (threads, inbox, tasks, presence) instead of legacy snapshots.
+- UI reflects runtime state directly (threads, inbox, tasks, presence) without fallback dependency on removed legacy routes.
 
 ## Scope
 In scope:
@@ -77,8 +76,7 @@ Out of scope:
 - inbox -> `/v1/inbox`
 - tasks/handoffs -> `/v1/tasks`
 - presence -> `/v1/presence`, `/v1/presence/last-seen`
-- Remove legacy dependency on `/api/chats` and `/api/view` for primary collaboration workflows.
-- Keep legacy world endpoints only as compatibility layer during cutover.
+- Legacy world endpoints are removed from collaboration workflows; deprecated `/api/*` action/read routes return `410 ERR_LEGACY_API_REMOVED`.
 
 ## Data model additions
 - `inbox_items`

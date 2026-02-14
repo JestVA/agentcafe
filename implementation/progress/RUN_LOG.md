@@ -2,6 +2,10 @@
 
 Append one section per implementation run.
 
+Historical note:
+- Entries below can reference pre-cutover legacy world endpoints (`/api/*`) from earlier phases.
+- Canonical runtime cutover completed on 2026-02-14; agent integrations should use `/v1/*`.
+
 ## 2026-02-14 - Planning baseline created
 - Author: Codex
 - Stories touched: planning only (no story implemented yet)

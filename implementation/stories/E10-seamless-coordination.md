@@ -103,7 +103,7 @@ Scope:
 - Remove polling as primary mechanism for collaboration views.
 
 Acceptance criteria:
-- UI no longer depends on `/api/chats` or `/api/view` for core collaboration.
+- UI no longer depends on legacy world collaboration routes for core collaboration.
 - Users can observe structured coordination in real time.
 
 ## ACF-913 Structured handoff UX

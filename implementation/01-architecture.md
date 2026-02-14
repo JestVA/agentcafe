@@ -60,3 +60,50 @@
 - Realtime fanout delay p95 < 500ms.
 - Event projector lag < 2s.
 - 99.9% successful webhook delivery with retries.
+
+## Seamless coordination additions
+
+### New control-plane services/contracts
+- `agentcafe-orchestrator` (private): event-driven agent loop execution.
+- `agentcafe-inbox` (logical subsystem in API + projector): unread queue + ack workflow per actor.
+- `agentcafe-ui-v2` (public): runtime-first collaboration UI surface.
+
+### Inbox protocol
+- `GET /v1/inbox`:
+- filters: `tenantId`, `roomId`, `actorId`, `unreadOnly`, `cursor`, `limit`
+- returns ordered inbox items and next cursor
+- `POST /v1/inbox/{inboxItemId}/ack`:
+- idempotent single-item ack
+- `POST /v1/inbox/ack`:
+- idempotent bulk ack by ids/cursor
+
+### Orchestrator behavior contract
+- Inputs:
+- market events stream
+- inbox unread items
+- actor policy/permission state
+- Outputs:
+- runtime command/intents/conversation writes
+- action traces with reason codes
+- Required safeguards:
+- bounded retries
+- cooldowns
+- policy-aware fallback to read-only mode
+
+### Runtime UI contract
+- UI collaboration views must read runtime APIs directly:
+- threads/messages from runtime timeline/conversation
+- inbox from `/v1/inbox`
+- tasks/handoffs from `/v1/tasks`
+- presence from `/v1/presence*`
+- Legacy `/api/chats` and `/api/view` remain compatibility-only during migration window.
+
+### Push transport
+- SSE remains canonical stream and replay source.
+- WS transport is added as a fanout protocol option with equivalent event semantics.
+- Canonical client-facing event names:
+- `message.created`
+- `mention.created`
+- `task.updated`
+- `presence.updated`
+- `operator.override_applied`

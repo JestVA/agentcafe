@@ -2,17 +2,20 @@ import http from "node:http";
 import { AppError, errorBody, getRequestId, normalizeError } from "../shared/errors.mjs";
 import { json } from "../shared/http.mjs";
 import { extractSseMessages } from "../shared/sse.mjs";
+import { createRedisReplayStore } from "./redis-replay-store.mjs";
 
 const HOST = process.env.REALTIME_HOST || "0.0.0.0";
 const PORT = Number(process.env.REALTIME_PORT || process.env.PORT || 3851);
 const CLIENT_HEARTBEAT_MS = Number(process.env.REALTIME_HEARTBEAT_MS || 15000);
 const SOURCE_RECONNECT_MS = Number(process.env.REALTIME_SOURCE_RECONNECT_MS || 2000);
 const HISTORY_LIMIT = Number(process.env.REALTIME_ROOM_HISTORY_LIMIT || 500);
+const DEFAULT_TENANT_ID = process.env.REALTIME_DEFAULT_TENANT_ID || "default";
 const SOURCE_URL =
   process.env.REALTIME_EVENT_SOURCE_URL || "http://127.0.0.1:3850/v1/streams/market-events";
 
 const roomClients = new Map();
 const roomHistory = new Map();
+const replayStore = await createRedisReplayStore();
 
 const sourceState = {
   connected: false,
@@ -22,36 +25,43 @@ const sourceState = {
   lastError: null
 };
 
-function ensureRoomClients(roomId) {
-  let set = roomClients.get(roomId);
+function roomKey(tenantId, roomId) {
+  return `${tenantId}:${roomId}`;
+}
+
+function ensureRoomClients(key) {
+  let set = roomClients.get(key);
   if (!set) {
     set = new Set();
-    roomClients.set(roomId, set);
+    roomClients.set(key, set);
   }
   return set;
 }
 
-function ensureRoomHistory(roomId) {
-  let list = roomHistory.get(roomId);
+function ensureRoomHistory(key) {
+  let list = roomHistory.get(key);
   if (!list) {
     list = [];
-    roomHistory.set(roomId, list);
+    roomHistory.set(key, list);
   }
   return list;
 }
 
 function removeClient(client) {
-  const set = roomClients.get(client.roomId);
+  const set = roomClients.get(client.streamKey);
   if (!set) {
     return;
   }
   set.delete(client);
   if (set.size === 0) {
-    roomClients.delete(client.roomId);
+    roomClients.delete(client.streamKey);
   }
 }
 
 function matchesClient(client, event) {
+  if (client.tenantId && client.tenantId !== event.tenantId) {
+    return false;
+  }
   if (client.roomId && client.roomId !== event.roomId) {
     return false;
   }
@@ -62,6 +72,26 @@ function matchesClient(client, event) {
     return false;
   }
   return true;
+}
+
+function sortBySequence(events) {
+  return [...events].sort((a, b) => {
+    const left = Number(a?.sequence || 0);
+    const right = Number(b?.sequence || 0);
+    return left - right;
+  });
+}
+
+function mergeUniqueEvents(events) {
+  const map = new Map();
+  for (const event of events) {
+    if (!event || typeof event !== "object") {
+      continue;
+    }
+    const key = event.eventId || `seq:${Number(event.sequence || 0)}`;
+    map.set(key, event);
+  }
+  return sortBySequence([...map.values()]);
 }
 
 function writeSse(res, { id, type, data }) {
@@ -79,8 +109,13 @@ function ingestEvent(event) {
     return;
   }
 
+  const tenantId = typeof event.tenantId === "string" && event.tenantId ? event.tenantId : DEFAULT_TENANT_ID;
   const roomId = typeof event.roomId === "string" && event.roomId ? event.roomId : "main";
-  const history = ensureRoomHistory(roomId);
+  const streamKey = roomKey(tenantId, roomId);
+  event.tenantId = tenantId;
+  event.roomId = roomId;
+
+  const history = ensureRoomHistory(streamKey);
   history.push(event);
   if (history.length > HISTORY_LIMIT) {
     history.splice(0, history.length - HISTORY_LIMIT);
@@ -91,7 +126,7 @@ function ingestEvent(event) {
   }
   sourceState.lastEventAt = new Date().toISOString();
 
-  const clients = roomClients.get(roomId);
+  const clients = roomClients.get(streamKey);
   if (!clients || !clients.size) {
     return;
   }
@@ -109,12 +144,32 @@ function ingestEvent(event) {
   }
 }
 
-function replayToClient(client, cursor = 0, limit = 300) {
-  const history = ensureRoomHistory(client.roomId);
-  const replay = history
-    .filter((event) => (Number(event.sequence) || 0) > Number(cursor || 0))
+async function replayToClient(client, cursor = 0, limit = 300) {
+  const boundedLimit = Math.max(1, Math.min(Number(limit) || 300, 1000));
+  const startCursor = Number(cursor || 0);
+  const memoryReplay = ensureRoomHistory(client.streamKey)
+    .filter((event) => (Number(event.sequence) || 0) > startCursor)
+    .filter((event) => matchesClient(client, event));
+
+  let replay = memoryReplay;
+  if (replayStore?.enabled) {
+    try {
+      const redisReplay = await replayStore.listEvents({
+        tenantId: client.tenantId,
+        roomId: client.roomId,
+        cursor: startCursor,
+        limit: boundedLimit
+      });
+      replay = mergeUniqueEvents([...redisReplay, ...memoryReplay]);
+    } catch (error) {
+      sourceState.lastError = `redis replay failed: ${error instanceof Error ? error.message : String(error)}`;
+      replay = sortBySequence(memoryReplay);
+    }
+  }
+
+  replay = replay
     .filter((event) => matchesClient(client, event))
-    .slice(-Math.max(1, Math.min(Number(limit) || 300, 1000)));
+    .slice(-boundedLimit);
 
   for (const event of replay) {
     writeSse(client.res, {
@@ -230,6 +285,10 @@ const server = http.createServer(async (req, res) => {
           service: "agentcafe-realtime",
           rooms: roomClients.size,
           clients: [...roomClients.values()].reduce((sum, set) => sum + set.size, 0),
+          replayStore: {
+            enabled: Boolean(replayStore?.enabled),
+            reason: replayStore?.reason || null
+          },
           source: {
             connected: sourceState.connected,
             reconnects: sourceState.reconnects,
@@ -243,11 +302,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/v1/stream") {
+      const tenantId = (url.searchParams.get("tenantId") || DEFAULT_TENANT_ID).trim() || DEFAULT_TENANT_ID;
       const roomId = (url.searchParams.get("roomId") || "main").trim() || "main";
       const actorId = (url.searchParams.get("actorId") || "").trim() || null;
       const types = parseTypes(url.searchParams.get("types"));
       const cursor = Number(url.searchParams.get("cursor") || 0);
       const replayLimit = Number(url.searchParams.get("limit") || 300);
+      const streamKey = roomKey(tenantId, roomId);
 
       res.writeHead(200, {
         "content-type": "text/event-stream",
@@ -258,15 +319,18 @@ const server = http.createServer(async (req, res) => {
 
       const client = {
         res,
+        tenantId,
         roomId,
         actorId,
         types,
+        streamKey,
         lastCursor: Number.isFinite(cursor) ? cursor : 0
       };
 
       writeSse(res, {
         type: "snapshot",
         data: {
+          tenantId,
           roomId,
           actorId,
           types,
@@ -275,12 +339,13 @@ const server = http.createServer(async (req, res) => {
         }
       });
 
-      const replayed = replayToClient(client, client.lastCursor, replayLimit);
-      ensureRoomClients(roomId).add(client);
+      const replayed = await replayToClient(client, client.lastCursor, replayLimit);
+      ensureRoomClients(streamKey).add(client);
 
       writeSse(res, {
         type: "ready",
         data: {
+          tenantId,
           roomId,
           replayed,
           requestId
@@ -321,6 +386,23 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   process.stdout.write(`agentcafe-realtime listening on http://${HOST}:${PORT}\n`);
   process.stdout.write(`agentcafe-realtime source stream ${SOURCE_URL}\n`);
+  if (replayStore?.enabled) {
+    process.stdout.write("agentcafe-realtime redis replay store enabled\n");
+  } else {
+    process.stdout.write(`agentcafe-realtime redis replay store disabled: ${replayStore?.reason || "unknown"}\n`);
+  }
 });
 
 consumeSourceForever();
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    void (async () => {
+      try {
+        await replayStore?.close?.();
+      } finally {
+        process.exit(0);
+      }
+    })();
+  });
+}

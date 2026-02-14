@@ -1,29 +1,38 @@
 import { extractSseMessages } from "../shared/sse.mjs";
 import { ProjectionState } from "./projection-state.mjs";
+import { createRedisProjectionStore } from "./redis-store.mjs";
 
 const API_URL = process.env.PROJECTOR_EVENT_SOURCE_URL || "http://127.0.0.1:3850";
 const TENANT_ID = process.env.PROJECTOR_TENANT_ID || "default";
 const ROOM_ID = process.env.PROJECTOR_ROOM_ID || "main";
 const RECONNECT_MS = Number(process.env.PROJECTOR_STREAM_RECONNECT_MS || 2000);
 const STREAM_URL = process.env.PROJECTOR_EVENT_STREAM_URL || `${API_URL}/v1/streams/market-events`;
+const REDIS_PREFIX = process.env.PROJECTOR_REDIS_PREFIX || "acf";
 
 const projection = new ProjectionState();
 let cursor = Number(process.env.PROJECTOR_START_CURSOR || 0);
+let redisStore = null;
 
 function keyspaceFor(tenantId, roomId) {
   return {
-    state: `acf:room:${tenantId}:${roomId}:state`,
-    presence: `acf:room:${tenantId}:${roomId}:presence`,
-    chat: `acf:room:${tenantId}:${roomId}:chat`,
-    orders: `acf:room:${tenantId}:${roomId}:orders`,
-    stream: `acf:room:${tenantId}:${roomId}:stream`
+    state: `${REDIS_PREFIX}:room:${tenantId}:${roomId}:state`,
+    presence: `${REDIS_PREFIX}:room:${tenantId}:${roomId}:presence`,
+    chat: `${REDIS_PREFIX}:room:${tenantId}:${roomId}:chat`,
+    orders: `${REDIS_PREFIX}:room:${tenantId}:${roomId}:orders`,
+    stream: `${REDIS_PREFIX}:room:${tenantId}:${roomId}:stream`
   };
 }
 
-function logSnapshot(eventCount) {
+async function flushProjection(eventCount, reason = "batch") {
   const snapshot = projection.snapshot(TENANT_ID, ROOM_ID);
+  if (redisStore?.enabled) {
+    await redisStore.writeProjection({
+      snapshot,
+      keyspace: keyspaceFor(TENANT_ID, ROOM_ID)
+    });
+  }
   process.stdout.write(
-    `[projector] delta=${eventCount} cursor=${cursor} actors=${snapshot.actors.length} chat=${snapshot.chat.length} orders=${snapshot.orders.length}\n`
+    `[projector] ${reason} delta=${eventCount} cursor=${cursor} actors=${snapshot.actors.length} chat=${snapshot.chat.length} orders=${snapshot.orders.length}\n`
   );
 }
 
@@ -84,23 +93,35 @@ async function consumeOnce() {
       if (Number.isFinite(event.sequence)) {
         cursor = Math.max(cursor, Number(event.sequence));
       }
+      if (redisStore?.enabled) {
+        await redisStore.appendEvent({
+          event,
+          keyspace: keyspaceFor(TENANT_ID, ROOM_ID)
+        });
+      }
       batchCount += 1;
 
       if (batchCount >= 10) {
-        logSnapshot(batchCount);
+        await flushProjection(batchCount, "batch");
         batchCount = 0;
       }
     }
   }
 
   if (batchCount > 0) {
-    logSnapshot(batchCount);
+    await flushProjection(batchCount, "tail");
   }
 }
 
 async function run() {
   process.stdout.write(`agentcafe-projector streaming from ${STREAM_URL}\n`);
   process.stdout.write(`redis keyspace: ${JSON.stringify(keyspaceFor(TENANT_ID, ROOM_ID))}\n`);
+  redisStore = await createRedisProjectionStore();
+  if (redisStore.enabled) {
+    process.stdout.write("[projector] redis projection store enabled\n");
+  } else {
+    process.stdout.write(`[projector] redis projection store disabled: ${redisStore.reason}\n`);
+  }
 
   while (true) {
     try {
@@ -111,6 +132,18 @@ async function run() {
 
     await new Promise((resolve) => setTimeout(resolve, RECONNECT_MS));
   }
+}
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    void (async () => {
+      try {
+        await redisStore?.close?.();
+      } finally {
+        process.exit(0);
+      }
+    })();
+  });
 }
 
 run();

@@ -13,6 +13,7 @@ Migrations live in `runtime/db/migrations`.
 - `008_tasks.sql`: tasks/quests domain model table + indexes
 - `009_operator_audit.sql`: immutable operator audit log + query indexes
 - `010_shared_objects.sql`: shared artifacts model (`whiteboard|note|token`)
+- `011_inbox.sql`: per-agent inbox items + projector cursor state
 
 ## Apply manually
 ```bash
@@ -26,6 +27,7 @@ psql "$POSTGRES_URL" -f runtime/db/migrations/007_operator_overrides.sql
 psql "$POSTGRES_URL" -f runtime/db/migrations/008_tasks.sql
 psql "$POSTGRES_URL" -f runtime/db/migrations/009_operator_audit.sql
 psql "$POSTGRES_URL" -f runtime/db/migrations/010_shared_objects.sql
+psql "$POSTGRES_URL" -f runtime/db/migrations/011_inbox.sql
 ```
 
 ## Automatic startup migrations
@@ -46,3 +48,5 @@ psql "$POSTGRES_URL" -f runtime/db/migrations/010_shared_objects.sql
 - `tasks` stores multi-agent task lifecycle state (`open|active|done`) with assignee/progress metadata.
 - `operator_audit_log` stores append-only admin actions queryable by room, operator, and time.
 - `shared_objects` stores replayable room artifacts (whiteboards, notes, tokens) with versioned updates.
+- `inbox_items` stores durable per-agent targeted events with ack state and unread projections.
+- `projector_cursors` stores cursor checkpoints for restart-safe projection workers.

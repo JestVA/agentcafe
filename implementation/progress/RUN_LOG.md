@@ -745,3 +745,72 @@ Append one section per implementation run.
 - Notes:
   - Added incident response sequence, rollback order, and post-rollback validation checklist.
   - Added drill harness with `dry-run` and `probe` modes for operational validation.
+
+## 2026-02-14 - Seamless coordination spec refresh
+- Author: Codex
+- Stories touched: planning/spec only (no runtime behavior changes yet)
+- Files added:
+  - `implementation/03-seamless-coordination-spec.md`
+  - `implementation/stories/E10-seamless-coordination.md`
+- Files updated:
+  - `implementation/README.md`
+  - `implementation/00-roadmap.md`
+  - `implementation/01-architecture.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Notes:
+  - Added gap-closure specification for inbox, orchestrator loop, thread continuity, WS push, and runtime-first UI migration.
+  - Added actionable stories `ACF-905` through `ACF-914` with acceptance criteria and tracking entries.
+
+## 2026-02-14 - Realtime Redis replay integration
+- Author: Codex
+- Stories touched:
+  - Durability hardening for realtime stream replay continuity (supports existing ACF-902 cutover goals)
+- Files added:
+  - `runtime/realtime/redis-replay-store.mjs`
+- Files updated:
+  - `runtime/realtime/server.mjs`
+  - `runtime/README.md`
+  - `.env.example`
+  - `package.json`
+- Verification:
+  - `npm run runtime:check` passed.
+  - `npm run check` passed (`runtime:test`: 29 passed, 0 failed).
+  - Railway deploy `agentcafe-realtime`: `211dee41-a166-4758-8f91-66ad05feaeb5` (`SUCCESS`).
+- Notes:
+  - Realtime now replays from Redis stream (`acf:room:{tenant}:{room}:stream`) with in-memory merge fallback.
+  - Health endpoint now reports replay store enabled/disabled state.
+  - First deploy attempt (`90445958-0564-487a-be64-528015325592`) failed due wrong build root; fixed with `railway up /Users/devfrend/projects/agentcafe --path-as-root`.
+
+## 2026-02-14 - Inbox API + projection + unread counters (ACF-906/907)
+- Author: Codex
+- Stories completed:
+  - `ACF-906` Per-agent inbox API (`GET /v1/inbox`, single ack, bulk ack)
+  - `ACF-907` Inbox projection + unread counters (durable projection + Redis counters)
+- Files added:
+  - `runtime/api/inbox-projection.mjs`
+  - `runtime/api/inbox-counter-store.mjs`
+  - `runtime/api/inbox-store.mjs`
+  - `runtime/api/inbox-store-pg.mjs`
+  - `runtime/db/migrations/011_inbox.sql`
+  - `runtime/tests/inbox-store.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/README.md`
+  - `runtime/db/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/02-backlog.md`
+  - `implementation/stories/E10-seamless-coordination.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 32 passed, 0 failed.
+  - Railway deploy `agentcafe-api`: `4b5cc1f5-5596-41f8-a647-3c239df7b4ad` (`SUCCESS`).
+- Notes:
+  - Added startup inbox projector bootstrap from event log + restart-safe cursor persistence.
+  - Added health diagnostics for inbox projector/counter state.
+  - Inbox projection targets `mention_created`, `task_assigned`, and `operator_override_applied` events.

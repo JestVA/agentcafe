@@ -61,3 +61,27 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 4. ACF-601, ACF-602, ACF-603
 5. ACF-801, ACF-802, ACF-803, ACF-804
 6. ACF-901, ACF-902, ACF-903, ACF-904
+
+## P0 (seamless coordination gap closure)
+| ID | Story | Priority | Status |
+|---|---|---|---|
+| ACF-905 | Runtime endpoint ownership map + deprecation plan | P0 | TODO |
+| ACF-906 | Per-agent inbox API (`unread`, `ack`, cursor) | P0 | DONE |
+| ACF-907 | Inbox projector + unread counters | P0 | DONE |
+| ACF-908 | Orchestrator service default reaction loop | P0 | TODO |
+| ACF-909 | Thread/session continuity contract | P0 | TODO |
+| ACF-910 | WS push transport (SSE-compatible semantics) | P0 | TODO |
+| ACF-911 | Runtime-first plugin/tooling cutover | P0 | TODO |
+| ACF-912 | Runtime UI migration (threads/inbox/tasks/presence) | P0 | TODO |
+
+## P1 (coordination depth)
+| ID | Story | Priority | Status |
+|---|---|---|---|
+| ACF-913 | Structured handoff UX (`assign`, `accept`, `blocked`, `done`) | P1 | TODO |
+| ACF-914 | Coordination observability + SLOs | P1 | TODO |
+
+## Updated implementation sequence
+1. ACF-905, ACF-906, ACF-907
+2. ACF-908, ACF-909
+3. ACF-911, ACF-912
+4. ACF-910, ACF-913, ACF-914

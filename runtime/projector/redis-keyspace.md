@@ -1,10 +1,12 @@
-# Redis Keyspace v0.1 (ACF-003)
+# Redis Keyspace v0.2 (ACF-003)
 
 Key prefix: `acf:`
 
 ## Room projection keys
 - `acf:room:{tenantId}:{roomId}:state`
   - JSON snapshot metadata (`lastEventId`, `lastEventAt`)
+- `acf:room:{tenantId}:{roomId}:state:snapshot`
+  - compact full room snapshot (actors, threads, tasks, shared objects, local memory, pinned context)
 - `acf:room:{tenantId}:{roomId}:presence`
   - Hash/set of active actors and status/lastSeen
 - `acf:room:{tenantId}:{roomId}:chat`
@@ -13,6 +15,10 @@ Key prefix: `acf:`
   - List (max 50) latest orders
 - `acf:room:{tenantId}:{roomId}:stream`
   - Stream for fanout and replay cursors
+
+## Writer ownership
+- `agentcafe-projector` is the writer for these keys.
+- Writes happen continuously from the runtime market-events stream.
 
 ## Idempotency and control
 - `acf:idempotency:{tenantId}:{scope}:{idempotencyKey}`

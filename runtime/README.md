@@ -4,7 +4,7 @@ This folder contains the first production-architecture slice.
 
 ## Services
 - `api/server.mjs`: command API with idempotency + structured errors.
-- `realtime/server.mjs`: SSE realtime fanout consuming API market-events stream.
+- `realtime/server.mjs`: SSE realtime fanout consuming API market-events stream (with Redis-backed replay when configured).
 - `projector/worker.mjs`: stream-driven projection worker and keyspace mapping.
 - `shared/*`: common event/error/http/validation contracts.
 - `db/migrations/*`: initial Postgres schema and indexes.
@@ -17,6 +17,9 @@ npm run runtime:projector
 ```
 
 To enable durable DB-backed stores, set `DATABASE_URL` (Postgres). The API auto-applies migrations at startup by default (`API_DB_AUTO_MIGRATE=true`).
+
+To enable Redis-backed room projections and replay, set `REDIS_URL` for `agentcafe-projector` and `agentcafe-realtime`.
+The projector writes room state/presence/chat/orders snapshots and event stream entries into Redis keyspace (`acf:*` by default), and realtime reads room streams for reconnect replay continuity.
 
 ## Load + SLO gate
 Run against a live API/realtime endpoint:
@@ -53,6 +56,9 @@ The command exits non-zero when SLO thresholds fail.
 - `POST /v1/intents/execute` (`navigate_to`, `sit_at_table`)
 - `GET /v1/events` (cursor-based list)
 - `GET /v1/mentions` (mention events by actor/room)
+- `GET /v1/inbox` (per-agent inbox with unread/cursor filters)
+- `POST /v1/inbox/{inboxItemId}/ack` (ack single item idempotently)
+- `POST /v1/inbox/ack` (bulk ack by ids and/or cursor)
 - `GET /v1/operator/overrides` (read room override state or list)
 - `POST /v1/operator/overrides` (apply `pause_room|resume_room|mute_agent|unmute_agent|force_leave`)
 - `GET /v1/operator/audit` (immutable operator action log with room/time filters)
@@ -122,6 +128,8 @@ Implemented:
 - ACF-303 pinned context revision history API
 - ACF-304 snapshot/versioning contract (in-memory runtime store)
 - ACF-404 market-events SSE stream with cursor resume
+- ACF-906 per-agent inbox API (`GET /v1/inbox`, single + bulk ack)
+- ACF-907 inbox projection + unread counters (durable inbox projection + Redis unread counters)
 - ACF-401 subscription registry + CRUD API (DB-backed when `DATABASE_URL` is set, file fallback otherwise)
 - ACF-402 signed webhook dispatcher with retry + DLQ (DB-backed when `DATABASE_URL` is set)
 - ACF-403 internal reaction subscriptions + event-driven trigger engine

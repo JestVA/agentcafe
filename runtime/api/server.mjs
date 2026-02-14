@@ -41,6 +41,9 @@ import { PgSubscriptionStore } from "./subscription-store-pg.mjs";
 import { FileSubscriptionStore } from "./subscription-store.mjs";
 import { InMemoryTraceStore, REASON_CODES } from "./trace-store.mjs";
 import { WebhookDispatcher } from "./webhook-dispatcher.mjs";
+import { createInboxCounterStore } from "./inbox-counter-store.mjs";
+import { PgInboxStore } from "./inbox-store-pg.mjs";
+import { FileInboxStore } from "./inbox-store.mjs";
 
 const HOST = process.env.API_HOST || "0.0.0.0";
 const PORT = Number(process.env.API_PORT || process.env.PORT || 3850);
@@ -57,6 +60,7 @@ const PROFILES_FILE = process.env.PROFILES_FILE || "./runtime/data/profiles.json
 const REACTIONS_FILE = process.env.REACTIONS_FILE || "./runtime/data/reactions.json";
 const TASKS_FILE = process.env.TASKS_FILE || "./runtime/data/tasks.json";
 const OBJECTS_FILE = process.env.OBJECTS_FILE || "./runtime/data/objects.json";
+const INBOX_FILE = process.env.INBOX_FILE || "./runtime/data/inbox.json";
 const PRESENCE_DEFAULT_TTL_MS = Math.max(1000, Number(process.env.PRESENCE_DEFAULT_TTL_MS || 60000));
 const PRESENCE_SWEEP_MS = Math.max(500, Number(process.env.PRESENCE_SWEEP_MS || 2000));
 const API_DB_AUTO_MIGRATE = String(process.env.API_DB_AUTO_MIGRATE ?? "true").toLowerCase() !== "false";
@@ -81,6 +85,7 @@ const moderationPolicy = new ModerationPolicy();
 const snapshots = new InMemorySnapshotStore();
 const planner = new IntentPlanner();
 const traces = new InMemoryTraceStore();
+const inboxCounterStore = await createInboxCounterStore();
 const subscriptionStore = pgPool
   ? new PgSubscriptionStore({ pool: pgPool })
   : new FileSubscriptionStore({ filePath: SUBSCRIPTIONS_FILE });
@@ -111,6 +116,9 @@ const sharedObjectStore = pgPool
 const pinnedContextStore = pgPool
   ? new PgPinnedContextStore({ pool: pgPool })
   : new FilePinnedContextStore({ filePath: ROOM_CONTEXT_FILE });
+const inboxStore = pgPool
+  ? new PgInboxStore({ pool: pgPool, counterStore: inboxCounterStore })
+  : new FileInboxStore({ filePath: INBOX_FILE, counterStore: inboxCounterStore });
 await eventStore.init?.();
 await subscriptionStore.init();
 await permissionStore.init();
@@ -122,6 +130,7 @@ await reactionStore.init();
 await taskStore.init();
 await sharedObjectStore.init();
 await pinnedContextStore.init();
+await inboxStore.init();
 const webhookDispatcher = new WebhookDispatcher({
   eventStore,
   subscriptionStore,
@@ -137,6 +146,85 @@ const reactionEngine = new ReactionEngine({
   maxConcurrency: Number(process.env.REACTION_MAX_CONCURRENCY || 4)
 });
 reactionEngine.start();
+
+const inboxProjectorState = {
+  cursor: 0,
+  projectedEvents: 0,
+  insertedItems: 0,
+  rebuiltCounters: 0,
+  bootstrappedAt: null,
+  lastProjectedAt: null,
+  lastError: null
+};
+
+let inboxProjectionQueue = Promise.resolve();
+
+async function runInboxProjection(event) {
+  if (!event || typeof event !== "object") {
+    return;
+  }
+  const inserted = await inboxStore.projectEvent(event);
+  const sequence = Number(event.sequence || 0);
+  if (Number.isFinite(sequence) && sequence > 0) {
+    inboxProjectorState.cursor = Math.max(inboxProjectorState.cursor, sequence);
+    await inboxStore.setProjectorCursor({ cursor: inboxProjectorState.cursor });
+  }
+  inboxProjectorState.projectedEvents += 1;
+  inboxProjectorState.insertedItems += inserted.length;
+  inboxProjectorState.lastProjectedAt = new Date().toISOString();
+}
+
+function queueInboxProjection(event) {
+  inboxProjectionQueue = inboxProjectionQueue
+    .then(async () => {
+      await runInboxProjection(event);
+      inboxProjectorState.lastError = null;
+    })
+    .catch((error) => {
+      inboxProjectorState.lastError = error instanceof Error ? error.message : String(error);
+    });
+}
+
+async function bootstrapInboxProjection() {
+  let cursor = Number(await inboxStore.getProjectorCursor()) || 0;
+  inboxProjectorState.cursor = cursor;
+  const batchSize = 500;
+
+  while (true) {
+    const events = await eventStore.list({
+      afterCursor: cursor,
+      limit: batchSize,
+      order: "asc"
+    });
+    if (!events.length) {
+      break;
+    }
+
+    for (const event of events) {
+      const inserted = await inboxStore.projectEvent(event);
+      inboxProjectorState.projectedEvents += 1;
+      inboxProjectorState.insertedItems += inserted.length;
+      inboxProjectorState.lastProjectedAt = new Date().toISOString();
+      const sequence = Number(event.sequence || 0);
+      if (Number.isFinite(sequence) && sequence > 0) {
+        cursor = Math.max(cursor, sequence);
+      }
+    }
+    inboxProjectorState.cursor = cursor;
+    await inboxStore.setProjectorCursor({ cursor });
+  }
+
+  const counters = await inboxStore.rebuildUnreadCounters?.();
+  inboxProjectorState.rebuiltCounters = Number(counters?.updated || 0);
+  inboxProjectorState.bootstrappedAt = new Date().toISOString();
+}
+
+await bootstrapInboxProjection();
+eventStore.subscribe({
+  onEvent: (event) => {
+    queueInboxProjection(event);
+  }
+});
 
 async function sweepPresenceExpirations() {
   const nowIso = new Date().toISOString();
@@ -568,6 +656,12 @@ function parseIsoQuery(value, { field }) {
   return new Date(parsed).toISOString();
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || "")
+  );
+}
+
 function writeSseEvent(res, { type, data, id }) {
   if (id != null) {
     res.write(`id: ${id}\n`);
@@ -597,7 +691,8 @@ function mutatingRoute(pathname, method) {
     pathname === "/v1/objects" ||
     pathname === "/v1/profiles" ||
     pathname === "/v1/reactions/subscriptions" ||
-    pathname === "/v1/subscriptions"
+    pathname === "/v1/subscriptions" ||
+    pathname === "/v1/inbox/ack"
   ) {
     return true;
   }
@@ -606,7 +701,8 @@ function mutatingRoute(pathname, method) {
     pathname.startsWith("/v1/reactions/subscriptions/") ||
     pathname.startsWith("/v1/tasks/") ||
     pathname.startsWith("/v1/objects/") ||
-    pathname.startsWith("/v1/profiles/")
+    pathname.startsWith("/v1/profiles/") ||
+    pathname.startsWith("/v1/inbox/")
   ) {
     return true;
   }
@@ -1401,6 +1497,274 @@ async function handleMentions(req, res, url, requestId, rateHeaders) {
       ...rateHeaders
     }
   );
+}
+
+async function handleInbox(req, res, url, requestId, rateHeaders) {
+  const singleAckMatch = url.pathname.match(/^\/v1\/inbox\/([^/]+)\/ack$/);
+
+  if (req.method === "GET" && url.pathname === "/v1/inbox") {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const roomId = url.searchParams.get("roomId") || undefined;
+    const actorId = url.searchParams.get("actorId") || undefined;
+    const unreadOnly = parseBool(url.searchParams.get("unreadOnly"), false);
+    const cursor = url.searchParams.get("cursor") || undefined;
+    const limit = Number(url.searchParams.get("limit") || 100);
+    const order = url.searchParams.get("order") === "desc" ? "desc" : "asc";
+
+    const items = await inboxStore.list({
+      tenantId,
+      roomId,
+      actorId,
+      unreadOnly: Boolean(unreadOnly),
+      cursor,
+      limit,
+      order
+    });
+    const nextCursor = items.length ? items[items.length - 1].inboxSeq : Number(cursor || 0);
+    const unreadCount = await inboxStore.countUnread({ tenantId, roomId, actorId });
+    let projectedUnreadCount = null;
+    if (actorId && roomId && inboxCounterStore?.enabled) {
+      try {
+        projectedUnreadCount = await inboxCounterStore.get({
+          tenantId,
+          roomId,
+          actorId
+        });
+      } catch {
+        projectedUnreadCount = null;
+      }
+    }
+
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          tenantId,
+          roomId: roomId || null,
+          actorId: actorId || null,
+          unreadOnly: Boolean(unreadOnly),
+          order,
+          count: items.length,
+          nextCursor,
+          unreadCount,
+          projectedUnreadCount,
+          items
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  if (req.method === "POST" && singleAckMatch) {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", url.searchParams.get("tenantId") || "default");
+    const actorId = requireString(body, "actorId");
+    const inboxId = decodeURIComponent(singleAckMatch[1]);
+    if (!isUuid(inboxId)) {
+      throw new AppError("ERR_VALIDATION", "inboxId must be a UUID", {
+        field: "inboxId",
+        value: inboxId
+      });
+    }
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId: optionalString(body, "roomId", null),
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:${actorId}:inbox:${inboxId}:ack`;
+      const idempotent = idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      const acked = await inboxStore.ackOne({
+        tenantId,
+        actorId,
+        inboxId,
+        ackedBy: optionalString(body, "ackedBy", actorId)
+      });
+      if (!acked) {
+        throw new AppError("ERR_NOT_FOUND", "Inbox item not found", {
+          tenantId,
+          actorId,
+          inboxId
+        }, 404);
+      }
+
+      const unreadCount = await inboxStore.countUnread({
+        tenantId,
+        roomId: acked.item.roomId,
+        actorId
+      });
+      const response = {
+        ok: true,
+        data: {
+          item: acked.item,
+          changed: acked.changed,
+          unreadCount,
+          correlationId: trace.correlationId
+        }
+      };
+
+      idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 200,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 200, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "inbox_ack_single"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/inbox/ack") {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", "default");
+    const actorId = requireString(body, "actorId");
+    const roomId = optionalString(body, "roomId", null);
+    const ids = Array.isArray(body.ids)
+      ? body.ids.map((id) => String(id || "").trim()).filter(Boolean)
+      : [];
+    for (const id of ids) {
+      if (!isUuid(id)) {
+        throw new AppError("ERR_VALIDATION", "ids[] values must be UUIDs", {
+          field: "ids",
+          value: id
+        });
+      }
+    }
+    const upToCursor =
+      body.upToCursor == null || body.upToCursor === "" ? null : Number(body.upToCursor);
+    if (ids.length === 0 && !Number.isFinite(upToCursor)) {
+      throw new AppError("ERR_VALIDATION", "Bulk ack requires ids[] and/or upToCursor", {
+        fields: ["ids", "upToCursor"]
+      });
+    }
+
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId: roomId || undefined,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:${actorId}:inbox:ack:${roomId || "all"}`;
+      const idempotent = idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      const acked = await inboxStore.ackMany({
+        tenantId,
+        actorId,
+        roomId: roomId || undefined,
+        ids,
+        upToCursor,
+        ackedBy: optionalString(body, "ackedBy", actorId)
+      });
+      const unreadCount = await inboxStore.countUnread({
+        tenantId,
+        roomId: roomId || undefined,
+        actorId
+      });
+      const response = {
+        ok: true,
+        data: {
+          ackedCount: acked.ackedCount,
+          ackedIds: acked.ackedIds,
+          unreadCount,
+          correlationId: trace.correlationId
+        }
+      };
+
+      idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 200,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 200, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "inbox_ack_bulk"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError("ERR_UNSUPPORTED_ACTION", "Inbox route not found", {
+    method: req.method,
+    path: url.pathname
+  }, 404);
 }
 
 async function handleTimeline(req, res, url, requestId, rateHeaders) {
@@ -4388,7 +4752,21 @@ const server = http.createServer(async (req, res) => {
             tasks: pgPool ? "postgres" : "file",
             sharedObjects: pgPool ? "postgres" : "file",
             reactions: pgPool ? "postgres" : "file",
-            roomContext: pgPool ? "postgres" : "file"
+            roomContext: pgPool ? "postgres" : "file",
+            inbox: pgPool ? "postgres" : "file"
+          },
+          inboxProjector: {
+            cursor: inboxProjectorState.cursor,
+            projectedEvents: inboxProjectorState.projectedEvents,
+            insertedItems: inboxProjectorState.insertedItems,
+            rebuiltCounters: inboxProjectorState.rebuiltCounters,
+            bootstrappedAt: inboxProjectorState.bootstrappedAt,
+            lastProjectedAt: inboxProjectorState.lastProjectedAt,
+            lastError: inboxProjectorState.lastError,
+            counters: {
+              enabled: Boolean(inboxCounterStore?.enabled),
+              reason: inboxCounterStore?.reason || null
+            }
           },
           moderation: {
             windowMs: moderationPolicy.windowMs,
@@ -4413,6 +4791,10 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/v1/mentions") {
       return await handleMentions(req, res, url, requestId, rateHeaders);
+    }
+
+    if (url.pathname === "/v1/inbox" || url.pathname === "/v1/inbox/ack" || /^\/v1\/inbox\/.+/.test(url.pathname)) {
+      return await handleInbox(req, res, url, requestId, rateHeaders);
     }
 
     if (req.method === "GET" && url.pathname === "/v1/timeline") {

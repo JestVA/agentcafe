@@ -1,4 +1,5 @@
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +25,17 @@ const HOST = process.env.AGENTCAFE_HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || process.env.AGENTCAFE_PORT || 3846);
 const STREAM_HEARTBEAT_MS = Number(process.env.AGENTCAFE_STREAM_HEARTBEAT_MS || 15000);
 const SWEEP_INTERVAL_MS = Number(process.env.AGENTCAFE_SWEEP_INTERVAL_MS || 1000);
+const DUAL_WRITE_ENABLED = String(process.env.AGENTCAFE_DUAL_WRITE_ENABLED || "false").toLowerCase() === "true";
+const DUAL_WRITE_RUNTIME_API_URL = String(
+  process.env.AGENTCAFE_RUNTIME_API_URL || "http://127.0.0.1:3850"
+).replace(/\/$/, "");
+const DUAL_WRITE_TIMEOUT_MS = Math.max(250, Number(process.env.AGENTCAFE_DUAL_WRITE_TIMEOUT_MS || 3000));
+const DUAL_WRITE_HISTORY_LIMIT = Math.max(
+  10,
+  Math.min(Number(process.env.AGENTCAFE_DUAL_WRITE_HISTORY_LIMIT || 200), 2000)
+);
+const DUAL_WRITE_TENANT_ID = process.env.AGENTCAFE_DUAL_WRITE_TENANT_ID || "default";
+const DUAL_WRITE_ROOM_ID = process.env.AGENTCAFE_DUAL_WRITE_ROOM_ID || "main";
 
 const STATIC_FILES = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -33,6 +45,22 @@ const STATIC_FILES = new Map([
 ]);
 const streamClients = new Set();
 let streamSequence = 0;
+const dualWriteMetrics = {
+  enabled: DUAL_WRITE_ENABLED,
+  targetUrl: DUAL_WRITE_RUNTIME_API_URL,
+  tenantId: DUAL_WRITE_TENANT_ID,
+  roomId: DUAL_WRITE_ROOM_ID,
+  startedAt: new Date().toISOString(),
+  attempted: 0,
+  runtimeSucceeded: 0,
+  runtimeFailed: 0,
+  divergenceCount: 0,
+  lastAttemptAt: null,
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  lastError: null,
+  recent: []
+};
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -47,6 +75,155 @@ function sendError(res, statusCode, message) {
     ok: false,
     error: message
   });
+}
+
+function baseActorId(value) {
+  const actorId = String(value || "").trim();
+  return actorId || "agent";
+}
+
+function appendDualWriteMetric(entry) {
+  dualWriteMetrics.recent.unshift(entry);
+  if (dualWriteMetrics.recent.length > DUAL_WRITE_HISTORY_LIMIT) {
+    dualWriteMetrics.recent.length = DUAL_WRITE_HISTORY_LIMIT;
+  }
+}
+
+function mapDualWriteRequest(action, input = {}) {
+  const actorId = baseActorId(input.actorId);
+  const payloadBase = {
+    tenantId: DUAL_WRITE_TENANT_ID,
+    roomId: DUAL_WRITE_ROOM_ID,
+    actorId
+  };
+
+  if (action === "enter") {
+    return {
+      path: "/v1/commands/enter",
+      payload: payloadBase
+    };
+  }
+  if (action === "leave") {
+    return {
+      path: "/v1/commands/leave",
+      payload: payloadBase
+    };
+  }
+  if (action === "move") {
+    return {
+      path: "/v1/commands/move",
+      payload: {
+        ...payloadBase,
+        direction: input.direction,
+        steps: input.steps
+      }
+    };
+  }
+  if (action === "say") {
+    return {
+      path: "/v1/conversations/messages",
+      payload: {
+        ...payloadBase,
+        text: input.text,
+        ttlMs: input.ttlMs
+      }
+    };
+  }
+  if (action === "order") {
+    return {
+      path: "/v1/commands/order",
+      payload: {
+        ...payloadBase,
+        itemId: input.itemId,
+        size: input.size
+      }
+    };
+  }
+
+  return null;
+}
+
+async function replicateRuntimeWrite(action, input = {}) {
+  if (!DUAL_WRITE_ENABLED) {
+    return;
+  }
+
+  const mapping = mapDualWriteRequest(action, input);
+  if (!mapping) {
+    return;
+  }
+
+  const startedAt = Date.now();
+  dualWriteMetrics.attempted += 1;
+  dualWriteMetrics.lastAttemptAt = new Date(startedAt).toISOString();
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, DUAL_WRITE_TIMEOUT_MS);
+
+  let entry = {
+    ts: new Date().toISOString(),
+    action,
+    path: mapping.path,
+    actorId: baseActorId(input.actorId),
+    success: false,
+    statusCode: null,
+    latencyMs: null,
+    error: null
+  };
+
+  try {
+    const response = await fetch(`${DUAL_WRITE_RUNTIME_API_URL}${mapping.path}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": `dw-${action}-${Date.now()}-${randomUUID()}`
+      },
+      body: JSON.stringify(mapping.payload),
+      signal: controller.signal
+    });
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+    const success = response.ok && (!body || body.ok !== false);
+    const finishedAt = Date.now();
+    entry = {
+      ...entry,
+      success,
+      statusCode: response.status,
+      latencyMs: finishedAt - startedAt,
+      error: success ? null : body?.error || `HTTP ${response.status}`
+    };
+
+    if (success) {
+      dualWriteMetrics.runtimeSucceeded += 1;
+      dualWriteMetrics.lastSuccessAt = new Date(finishedAt).toISOString();
+    } else {
+      dualWriteMetrics.runtimeFailed += 1;
+      dualWriteMetrics.divergenceCount += 1;
+      dualWriteMetrics.lastFailureAt = new Date(finishedAt).toISOString();
+      dualWriteMetrics.lastError = entry.error;
+    }
+  } catch (error) {
+    const finishedAt = Date.now();
+    entry = {
+      ...entry,
+      success: false,
+      latencyMs: finishedAt - startedAt,
+      error: error instanceof Error ? error.message : String(error)
+    };
+    dualWriteMetrics.runtimeFailed += 1;
+    dualWriteMetrics.divergenceCount += 1;
+    dualWriteMetrics.lastFailureAt = new Date(finishedAt).toISOString();
+    dualWriteMetrics.lastError = entry.error;
+  } finally {
+    clearTimeout(timeout);
+    appendDualWriteMetric(entry);
+  }
 }
 
 function buildViewState() {
@@ -168,6 +345,18 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/dual-write/status") {
+    const attempted = dualWriteMetrics.attempted;
+    const runtimeParityRate = attempted > 0 ? dualWriteMetrics.runtimeSucceeded / attempted : null;
+    return sendJson(res, 200, {
+      ok: true,
+      data: {
+        ...dualWriteMetrics,
+        runtimeParityRate
+      }
+    });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/menu") {
     return sendJson(res, 200, requestMenu());
   }
@@ -209,37 +398,47 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/enter") {
-    const response = enterCafe(await readBody(req));
+    const body = await readBody(req);
+    const response = enterCafe(body);
     sendJson(res, 200, response);
     broadcastState("enter");
+    void replicateRuntimeWrite("enter", body);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/move") {
-    const response = moveActor(await readBody(req));
+    const body = await readBody(req);
+    const response = moveActor(body);
     sendJson(res, 200, response);
     broadcastState("move");
+    void replicateRuntimeWrite("move", body);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/say") {
-    const response = say(await readBody(req));
+    const body = await readBody(req);
+    const response = say(body);
     sendJson(res, 200, response);
     broadcastState("say");
+    void replicateRuntimeWrite("say", body);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/order") {
-    const response = orderCoffee(await readBody(req));
+    const body = await readBody(req);
+    const response = orderCoffee(body);
     sendJson(res, 200, response);
     broadcastState("order");
+    void replicateRuntimeWrite("order", body);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/leave") {
-    const response = leaveCafe(await readBody(req));
+    const body = await readBody(req);
+    const response = leaveCafe(body);
     sendJson(res, 200, response);
     broadcastState("leave");
+    void replicateRuntimeWrite("leave", body);
     return;
   }
 
@@ -286,4 +485,9 @@ server.on("close", () => {
 
 server.listen(PORT, HOST, () => {
   process.stdout.write(`AgentCafe world listening on http://${HOST}:${PORT}\n`);
+  if (DUAL_WRITE_ENABLED) {
+    process.stdout.write(
+      `AgentCafe dual-write enabled -> ${DUAL_WRITE_RUNTIME_API_URL} (tenant=${DUAL_WRITE_TENANT_ID}, room=${DUAL_WRITE_ROOM_ID})\n`
+    );
+  }
 });

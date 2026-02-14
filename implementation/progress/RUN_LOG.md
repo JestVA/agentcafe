@@ -677,3 +677,71 @@ Append one section per implementation run.
   - Added durable storage adapters (file + Postgres) and migration for `shared_objects`.
   - Shared object writes now emit replayable events: `shared_object_created`, `shared_object_updated`.
   - Projection snapshots and local memory now include shared object updates.
+
+## 2026-02-14 - ACF-703 collaboration quality scoring
+- Author: Codex
+- Story completed:
+  - `ACF-703` Collaboration quality scoring
+- Files added:
+  - `runtime/api/collaboration-score.mjs`
+  - `runtime/tests/collaboration-score.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/README.md`
+  - `package.json`
+  - `implementation/stories/E7-game-loops.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 29 passed, 0 failed.
+- Notes:
+  - Added deterministic score engine from room events with metrics/band grading.
+  - Added API endpoint `GET /v1/collaboration/score` with optional `tenantId`, `roomId`, `fromTs`, `toTs`, and `limit`.
+  - Score now increases directly when `task_completed` events are appended.
+
+## 2026-02-14 - ACF-901 dual-write migration tooling
+- Author: Codex
+- Story completed:
+  - `ACF-901` Dual-write migration from MVP endpoints
+- Files updated:
+  - `world/server.mjs`
+  - `.env.example`
+  - `README.md`
+  - `implementation/stories/E9-migration-cutover.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 29 passed, 0 failed.
+- Notes:
+  - Added optional dual-write mirror from legacy world write endpoints to runtime API commands.
+  - Added parity metrics/status endpoint: `GET /api/dual-write/status`.
+  - Legacy behavior remains primary; dual-write failures are tracked without blocking world responses.
+
+## 2026-02-14 - ACF-904 rollback + incident runbook
+- Author: Codex
+- Story completed:
+  - `ACF-904` Rollback and incident runbook
+- Files added:
+  - `implementation/runbooks/ROLLBACK_INCIDENT.md`
+  - `runtime/ops/rollback-drill.mjs`
+- Files updated:
+  - `package.json`
+  - `runtime/README.md`
+  - `implementation/stories/E9-migration-cutover.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run runtime:rollback:drill` passed (dry-run checklist).
+  - `npm run check` passed.
+  - `runtime:test` results: 29 passed, 0 failed.
+- Notes:
+  - Added incident response sequence, rollback order, and post-rollback validation checklist.
+  - Added drill harness with `dry-run` and `probe` modes for operational validation.

@@ -24,6 +24,17 @@ Run against a live API/realtime endpoint:
 npm run runtime:load
 ```
 
+## Rollback drill
+Generate rollback checklist (no probes):
+```bash
+npm run runtime:rollback:drill
+```
+
+Live probe mode:
+```bash
+ROLLBACK_DRILL_MODE=probe npm run runtime:rollback:drill
+```
+
 Key env vars:
 - `LOAD_TARGET_URL`, `LOAD_STREAM_URL`
 - `LOAD_DURATION_MS`, `LOAD_CONCURRENCY`, `LOAD_STREAM_FANOUT`
@@ -56,6 +67,7 @@ The command exits non-zero when SLO thresholds fail.
 - `GET /v1/timeline` (time/cursor filtered ordered events)
 - `GET /v1/replay` (reconstruct room window, default last 10 mins)
 - `GET /v1/memory/local` (last room interactions, max 5)
+- `GET /v1/collaboration/score` (deterministic room collaboration score from event heuristics)
 - `GET /v1/presence` (query presence states)
 - `GET /v1/presence/last-seen` (event-derived last-seen projection by room/actor)
 - `POST /v1/presence/heartbeat` (heartbeat + status update)
@@ -127,10 +139,12 @@ Implemented:
 - ACF-203 per-agent theme/color mapping in profile + replay conversation context
 - ACF-701 tasks/quests domain model + API
 - ACF-702 shared objects domain model + API
+- ACF-703 collaboration scoring API
 - ACF-803 operator override controls (pause room, mute/unmute agent, force leave + audit events)
 - ACF-804 operator audit trail query API
 - ACF-504 domain validation error expansion (deterministic canonical codes)
 - ACF-903 load test suite + SLO gate
+- ACF-904 rollback runbook + drill harness
 - ACF-801 permission matrix enforcement (`move`, `speak`, `order`, `enter_leave`, `moderate`)
 - ACF-802 moderation anti-loop rules (`ERR_MODERATION_BLOCKED` with reason codes)
 

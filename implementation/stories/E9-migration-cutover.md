@@ -1,7 +1,7 @@
 # Epic E9: Migration + Cutover
 
 ## ACF-901 Dual-write compatibility phase
-Status: TODO
+Status: DONE
 
 Scope:
 - Maintain MVP behavior while writing new event model.
@@ -29,7 +29,7 @@ Acceptance criteria:
 - Meets p95 and error-rate targets under expected load.
 
 ## ACF-904 Rollback and runbooks
-Status: TODO
+Status: DONE
 
 Scope:
 - Incident response, rollback commands, service recovery steps.

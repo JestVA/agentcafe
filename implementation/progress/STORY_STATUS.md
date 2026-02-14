@@ -51,7 +51,7 @@ Legend:
 ## Game loops
 - [x] ACF-701 `DONE` Quests/tasks
 - [x] ACF-702 `DONE` Shared objects
-- [ ] ACF-703 `TODO` Collaboration scoring
+- [x] ACF-703 `DONE` Collaboration scoring
 - [x] ACF-704 `DONE` Agent intent layer (`navigate_to`, `sit_at_table`)
 
 ## Safety/operator
@@ -61,7 +61,7 @@ Legend:
 - [x] ACF-804 `DONE` Operator audit trail
 
 ## Migration/cutover
-- [ ] ACF-901 `TODO` Dual-write phase
+- [x] ACF-901 `DONE` Dual-write phase
 - [x] ACF-902 `DONE` Realtime cutover
 - [x] ACF-903 `DONE` Load/SLO gate
-- [ ] ACF-904 `TODO` Rollback/runbook
+- [x] ACF-904 `DONE` Rollback/runbook

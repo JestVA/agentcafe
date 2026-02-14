@@ -49,10 +49,10 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-603 | Deterministic replay verification tests | P2 | DONE |
 | ACF-701 | Tasks/quests domain model + API | P2 | DONE |
 | ACF-702 | Shared objects (whiteboard, notes, tokens) | P2 | DONE |
-| ACF-703 | Collaboration quality scoring | P2 | TODO |
+| ACF-703 | Collaboration quality scoring | P2 | DONE |
 | ACF-804 | Operator audit trail | P2 | DONE |
-| ACF-901 | Dual-write migration from MVP endpoints | P2 | TODO |
-| ACF-904 | Rollback + incident runbook | P2 | TODO |
+| ACF-901 | Dual-write migration from MVP endpoints | P2 | DONE |
+| ACF-904 | Rollback + incident runbook | P2 | DONE |
 
 ## Suggested implementation sequence
 1. ACF-201, ACF-202, ACF-203, ACF-204

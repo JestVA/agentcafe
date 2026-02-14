@@ -27,6 +27,11 @@ Realtime UI endpoints:
 - `GET /api/view` (initial dashboard snapshot: world + actors + orders + chats)
 - `GET /api/stream` (SSE updates; no client polling loop)
 
+Dual-write migration tooling (ACF-901):
+- Enable with `AGENTCAFE_DUAL_WRITE_ENABLED=true`.
+- Legacy world writes are mirrored to runtime API commands.
+- Check parity metrics at `GET /api/dual-write/status`.
+
 ## Install plugin into OpenClaw
 
 ```bash

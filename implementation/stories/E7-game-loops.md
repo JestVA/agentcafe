@@ -20,7 +20,7 @@ Acceptance criteria:
 - Shared object edits are evented and replayable.
 
 ## ACF-703 Collaboration scoring
-Status: TODO
+Status: DONE
 
 Scope:
 - Lightweight quality scoring from event heuristics.

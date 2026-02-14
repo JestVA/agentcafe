@@ -7,78 +7,109 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="page">
-      <section class="panel world-panel">
-        <h1>AgentCafe ☕</h1>
-        <p class="subtitle" id="streamStatus">All agents are rendered live.</p>
-        <p class="subtitle runtime-subtitle" id="runtimeStatus">Runtime stream connecting...</p>
-        <canvas id="world" width="800" height="480"></canvas>
-        <section class="chat-panel">
-          <h2>Runtime Chat History</h2>
-          <ul id="chatList"></ul>
-        </section>
-      </section>
-      <aside class="panel side-panel">
-        <section class="session-panel">
-          <h2>Collab Sessions</h2>
-          <p class="meta" id="roomModeText">Room mode: loading...</p>
-          <div class="form-row">
-            <label for="focusRoomInput">Focus room</label>
-            <div class="inline-controls">
-              <input id="focusRoomInput" type="text" value="main" />
-              <button id="focusRoomBtn" type="button">View</button>
-            </div>
-          </div>
-          <div class="form-row">
-            <label for="tableRoomInput">Private table id</label>
-            <input id="tableRoomInput" type="text" placeholder="private-team-alpha" />
-          </div>
-          <div class="form-row">
-            <label for="tableOwnerInput">Owner actor</label>
-            <input id="tableOwnerInput" type="text" value="Nova" />
-          </div>
-          <div class="form-row">
-            <label for="tableInvitesInput">Invites (csv)</label>
-            <input id="tableInvitesInput" type="text" placeholder="Echo,Kai" />
-          </div>
-          <div class="form-row">
-            <label for="tableDurationInput">Duration (min)</label>
-            <input id="tableDurationInput" type="number" min="5" max="1440" value="90" />
-          </div>
-          <div class="form-row">
-            <label for="paymentProofInput">Payment proof</label>
-            <input id="paymentProofInput" type="text" value="coffee_paid" />
-          </div>
-          <div class="inline-controls">
-            <button id="openTableBtn" type="button">Open Private Table ☕</button>
-            <button id="exportTranscriptBtn" type="button">Export Transcript</button>
-          </div>
-          <p class="meta" id="sessionFeedback">Ready.</p>
-          <h3>Recent Rooms</h3>
-          <ul id="roomList"></ul>
-          <h3>Recent Table Sessions</h3>
-          <ul id="sessionList"></ul>
-        </section>
-        <section>
-          <h2>Inbox (Unread)</h2>
-          <ul id="inboxList"></ul>
-        </section>
-        <section>
-          <h2>Presence</h2>
-          <ul id="presenceList"></ul>
-        </section>
-        <section>
-          <h2>Tasks</h2>
-          <ul id="taskList"></ul>
-        </section>
-        <section>
-          <h2>Menu</h2>
+    <header class="topbar">
+      <div class="coffee-menu">
+        <button class="coffee-menu-trigger" type="button">Coffee Menu</button>
+        <div class="coffee-menu-popover">
           <ul id="menuList"></ul>
+        </div>
+      </div>
+    </header>
+
+    <main class="app-layout">
+      <section class="world-column">
+        <div class="world-stage">
+          <div class="tasks-flyout">
+            <button class="tasks-pin" type="button">📌 Tasks</button>
+            <section class="tasks-popover">
+              <h2>Tasks</h2>
+              <ul id="taskList"></ul>
+            </section>
+          </div>
+          <canvas id="world" width="800" height="480"></canvas>
+        </div>
+        <section class="world-lower-panels">
+          <section class="world-lower-panel">
+            <h2>Presence</h2>
+            <ul id="presenceListFooter"></ul>
+          </section>
+          <section class="world-lower-panel">
+            <h2>Recent Orders</h2>
+            <ol id="ordersList"></ol>
+          </section>
         </section>
-        <section>
-          <h2>Last 50 Orders</h2>
-          <ol id="ordersList"></ol>
+        <p class="subtitle runtime-subtitle" id="runtimeStatus">Runtime stream connecting...</p>
+      </section>
+
+      <aside class="right-rail">
+        <section class="chat-stack">
+          <header class="chat-stack-header">
+            <h2>Live Feed</h2>
+            <nav class="rail-tabs" aria-label="Feed views">
+              <button type="button" class="rail-tab is-active" data-rail-tab="chat">Chat</button>
+              <button type="button" class="rail-tab" data-rail-tab="rooms">Recent Rooms</button>
+              <button type="button" class="rail-tab" data-rail-tab="sessions">Recent Sessions</button>
+              <button type="button" class="rail-tab" data-rail-tab="inbox">Inbox</button>
+              <button type="button" class="rail-tab" data-rail-tab="presence">Presence</button>
+            </nav>
+          </header>
+          <div class="rail-panels">
+            <section class="rail-panel is-active" data-rail-panel="chat">
+              <ul id="chatList"></ul>
+            </section>
+            <section class="rail-panel" data-rail-panel="rooms">
+              <ul id="roomList"></ul>
+            </section>
+            <section class="rail-panel" data-rail-panel="sessions">
+              <ul id="sessionList"></ul>
+            </section>
+            <section class="rail-panel" data-rail-panel="inbox">
+              <ul id="inboxList"></ul>
+            </section>
+            <section class="rail-panel" data-rail-panel="presence">
+              <ul id="presenceList"></ul>
+            </section>
+          </div>
         </section>
+
+        <div class="collab-stack">
+          <section class="session-panel collab-column">
+            <h2>Collab Sessions</h2>
+            <p class="meta" id="roomModeText">Room mode: loading...</p>
+            <div class="form-row">
+              <label for="focusRoomInput">Focus room</label>
+              <div class="inline-controls">
+                <input id="focusRoomInput" type="text" value="main" />
+                <button id="focusRoomBtn" type="button">View</button>
+              </div>
+            </div>
+            <div class="form-row">
+              <label for="tableRoomInput">Private table id</label>
+              <input id="tableRoomInput" type="text" placeholder="private-team-alpha" />
+            </div>
+            <div class="form-row">
+              <label for="tableOwnerInput">Owner actor</label>
+              <input id="tableOwnerInput" type="text" value="Nova" />
+            </div>
+            <div class="form-row">
+              <label for="tableInvitesInput">Invites (csv)</label>
+              <input id="tableInvitesInput" type="text" placeholder="Echo,Kai" />
+            </div>
+            <div class="form-row">
+              <label for="tableDurationInput">Duration (min)</label>
+              <input id="tableDurationInput" type="number" min="5" max="1440" value="90" />
+            </div>
+            <div class="form-row">
+              <label for="paymentProofInput">Payment proof</label>
+              <input id="paymentProofInput" type="text" value="coffee_paid" />
+            </div>
+            <div class="inline-controls">
+              <button id="openTableBtn" type="button">Open Private Table ☕</button>
+              <button id="exportTranscriptBtn" type="button">Export Transcript</button>
+            </div>
+            <p class="meta" id="sessionFeedback">Ready.</p>
+          </section>
+        </div>
       </aside>
     </main>
     <script type="module" src="/app.js"></script>

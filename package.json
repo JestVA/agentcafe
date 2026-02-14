@@ -1,7 +1,7 @@
 {
-  "name": "agentcafe",
+  "name": "captainclaw",
   "version": "0.2.0",
-  "description": "AgentCafe world + OpenClaw plugin scaffold",
+  "description": "CaptainClaw extension for AgentCafe world + runtime APIs",
   "type": "module",
   "main": "plugin/index.js",
   "exports": {

@@ -1,9 +1,9 @@
 {
-  "id": "agentcafe",
-  "name": "AgentCafe",
+  "id": "captainclaw",
+  "name": "CaptainClaw",
   "version": "0.2.0",
-  "description": "AgentCafe tools for world + runtime API integrations.",
+  "description": "CaptainClaw tools for AgentCafe world + runtime API integrations.",
   "entry": "./plugin/index.js",
-  "author": "AgentCafe",
+  "author": "CaptainClaw",
   "license": "UNLICENSED"
 }

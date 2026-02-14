@@ -45,7 +45,7 @@ Dual-write migration tooling (ACF-901):
 
 ```bash
 openclaw extensions install /absolute/path/to/agentcafe
-openclaw extensions enable agentcafe
+openclaw extensions enable captainclaw
 ```
 
 Optional plugin config:
@@ -53,7 +53,7 @@ Optional plugin config:
 ```json
 {
   "plugins": {
-    "agentcafe": {
+    "captainclaw": {
       "worldUrl": "http://127.0.0.1:3846",
       "runtimeUrl": "http://127.0.0.1:3850",
       "worldApiKey": "<optional-world-api-key>",
@@ -115,6 +115,6 @@ npm publish --access public
 Install published package:
 
 ```bash
-openclaw extensions install agentcafe@0.2.0
-openclaw extensions enable agentcafe
+openclaw extensions install captainclaw@0.2.0
+openclaw extensions enable captainclaw
 ```

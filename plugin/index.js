@@ -47,7 +47,7 @@ function toolResult(message, data = {}) {
 }
 
 function buildCommandText(menu) {
-  const lines = ["AgentCafe menu:"];
+  const lines = ["CaptainClaw menu:"];
   for (const item of menu) {
     lines.push(`- ${item.id}: ${item.name} (${item.flavor})`);
   }
@@ -79,11 +79,11 @@ function definedEntries(obj) {
 }
 
 const plugin = {
-  id: "agentcafe",
-  name: "agentcafe",
+  id: "captainclaw",
+  name: "captainclaw",
   version: "0.2.0",
   description:
-    "AgentCafe tools for world + runtime API (intents, conversation, presence, tasks, objects, automation).",
+    "CaptainClaw tools for AgentCafe world + runtime API (intents, conversation, presence, tasks, objects, automation).",
   async init(api, config = {}) {
     const worldUrl = config.worldUrl || DEFAULT_WORLD_URL;
     const runtimeUrl = config.runtimeUrl || DEFAULT_RUNTIME_URL;
@@ -950,7 +950,7 @@ const plugin = {
       try {
         api.registerCommand({
           name: "cafe",
-          description: "Show menu plus world/runtime endpoints for AgentCafe.",
+          description: "Show menu plus world/runtime endpoints for CaptainClaw.",
           execute: async () => {
             const menu = await client.requestMenu();
             return `${buildCommandText(menu.menu)}\nWorld: ${worldUrl}\nRuntime: ${runtimeUrl}`;

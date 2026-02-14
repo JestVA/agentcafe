@@ -5,6 +5,7 @@ const ordersList = document.getElementById("ordersList");
 const chatList = document.getElementById("chatList");
 const inboxList = document.getElementById("inboxList");
 const presenceList = document.getElementById("presenceList");
+const presenceListFooter = document.getElementById("presenceListFooter");
 const taskList = document.getElementById("taskList");
 const streamStatus = document.getElementById("streamStatus");
 const runtimeStatus = document.getElementById("runtimeStatus");
@@ -21,6 +22,8 @@ const exportTranscriptBtn = document.getElementById("exportTranscriptBtn");
 const sessionFeedback = document.getElementById("sessionFeedback");
 const roomList = document.getElementById("roomList");
 const sessionList = document.getElementById("sessionList");
+const railTabButtons = Array.from(document.querySelectorAll("[data-rail-tab]"));
+const railTabPanels = Array.from(document.querySelectorAll("[data-rail-panel]"));
 
 const WORLD = {
   width: 20,
@@ -28,7 +31,7 @@ const WORLD = {
   actors: []
 };
 
-const CELL = 40;
+const CELL = 48;
 const RUNTIME = {
   tenantId: "default",
   roomId: "main",
@@ -45,6 +48,8 @@ const RUNTIME = {
 const runtimeState = {
   chats: [],
   chatEventIds: new Set(),
+  orders: [],
+  orderEventIds: new Set(),
   inbox: [],
   presence: [],
   rooms: [],
@@ -79,6 +84,7 @@ const ROOM_EVENT_TYPES = new Set([
 ]);
 
 let runtimeStreamSource = null;
+const menuById = new Map();
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
@@ -318,7 +324,11 @@ function render() {
 
 function renderMenu(menu) {
   menuList.innerHTML = "";
+  menuById.clear();
   for (const item of menu) {
+    if (item?.id) {
+      menuById.set(item.id, item);
+    }
     const li = document.createElement("li");
     const title = document.createElement("strong");
     title.textContent = item.name;
@@ -360,12 +370,13 @@ function renderChats(chats) {
   chatList.innerHTML = "";
   for (const chat of chats) {
     const li = document.createElement("li");
-    const title = document.createElement("strong");
-    title.textContent = `${chat.actorId}: ${chat.text}`;
+    const actor = document.createElement("strong");
+    actor.textContent = `${chat.actorId}: `;
+    const text = document.createTextNode(chat.text);
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = `${formatTime(chat.saidAt)}${chat.threadId ? ` | thread ${chat.threadId}` : ""}`;
-    li.append(title, meta);
+    li.append(actor, text, meta);
     chatList.appendChild(li);
   }
 }
@@ -397,8 +408,11 @@ function renderInbox(items) {
   }
 }
 
-function renderPresence(rows) {
-  presenceList.innerHTML = "";
+function renderPresenceInto(target, rows) {
+  if (!target) {
+    return;
+  }
+  target.innerHTML = "";
   for (const item of rows) {
     const li = document.createElement("li");
     const title = document.createElement("strong");
@@ -408,8 +422,13 @@ function renderPresence(rows) {
     meta.className = "meta";
     meta.textContent = `last heartbeat ${formatTime(item.lastHeartbeatAt || item.updatedAt)}`;
     li.append(title, meta);
-    presenceList.appendChild(li);
+    target.appendChild(li);
   }
+}
+
+function renderPresence(rows) {
+  renderPresenceInto(presenceList, rows);
+  renderPresenceInto(presenceListFooter, rows);
 }
 
 function renderTasks(rows) {
@@ -518,6 +537,22 @@ function toRuntimeChat(event) {
   };
 }
 
+function toRuntimeOrder(event) {
+  const itemId = event?.payload?.itemId || null;
+  if (!itemId) {
+    return null;
+  }
+  const item = menuById.get(itemId);
+  return {
+    eventId: event.eventId,
+    actorId: event.actorId || "agent",
+    itemId,
+    name: item?.name || itemId,
+    size: event?.payload?.size || "regular",
+    orderedAt: event.timestamp || new Date().toISOString()
+  };
+}
+
 function setStreamStatus(text) {
   if (streamStatus) {
     streamStatus.textContent = text;
@@ -549,6 +584,29 @@ function parseCsvList(value) {
   );
 }
 
+function activateRailTab(tabName) {
+  for (const button of railTabButtons) {
+    const isActive = button.dataset.railTab === tabName;
+    button.classList.toggle("is-active", isActive);
+  }
+  for (const panel of railTabPanels) {
+    const isActive = panel.dataset.railPanel === tabName;
+    panel.classList.toggle("is-active", isActive);
+  }
+}
+
+function bindRailTabs() {
+  if (railTabButtons.length === 0 || railTabPanels.length === 0) {
+    return;
+  }
+  railTabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      activateRailTab(button.dataset.railTab || "chat");
+    });
+  });
+  activateRailTab("chat");
+}
+
 function debounce(fn, waitMs) {
   let timer = null;
   return (...args) => {
@@ -578,6 +636,24 @@ async function refreshRuntimeChats() {
       return chat;
     });
   renderChats(runtimeState.chats);
+}
+
+async function refreshRuntimeOrders() {
+  const path =
+    `/api/runtime/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
+    `&types=order_changed&order=desc&limit=50`;
+  const payload = await api(path);
+  const events = payload?.data?.events || [];
+  runtimeState.orderEventIds.clear();
+  runtimeState.orders = events
+    .map(toRuntimeOrder)
+    .filter(Boolean)
+    .map((order) => {
+      runtimeState.orderEventIds.add(order.eventId);
+      return order;
+    });
+  renderOrders(runtimeState.orders);
 }
 
 async function refreshRuntimeInbox() {
@@ -631,6 +707,7 @@ async function refreshRuntimeSessions() {
 async function refreshRuntimePanels() {
   const results = await Promise.allSettled([
     refreshRuntimeChats(),
+    refreshRuntimeOrders(),
     refreshRuntimeInbox(),
     refreshRuntimePresence(),
     refreshRuntimeTasks(),
@@ -661,6 +738,12 @@ const refreshRuntimePresenceDebounced = debounce(() => {
   });
 }, 250);
 
+const refreshRuntimeOrdersDebounced = debounce(() => {
+  refreshRuntimeOrders().catch((error) => {
+    setRuntimeStatus(error instanceof Error ? error.message : String(error));
+  });
+}, 250);
+
 const refreshRuntimeRoomsDebounced = debounce(() => {
   refreshRuntimeRooms().catch((error) => {
     setRuntimeStatus(error instanceof Error ? error.message : String(error));
@@ -675,6 +758,18 @@ const refreshRuntimeSessionsDebounced = debounce(() => {
 
 function handleRuntimeEvent(data) {
   runtimeState.lastRuntimeEventAt = Date.now();
+
+  if (data.type === "order_changed") {
+    const order = toRuntimeOrder(data);
+    if (order && !runtimeState.orderEventIds.has(order.eventId)) {
+      runtimeState.orderEventIds.add(order.eventId);
+      runtimeState.orders.unshift(order);
+      runtimeState.orders = runtimeState.orders.slice(0, 50);
+      renderOrders(runtimeState.orders);
+    } else {
+      refreshRuntimeOrdersDebounced();
+    }
+  }
 
   if (data.type === "conversation_message_posted") {
     const chat = toRuntimeChat(data);
@@ -717,9 +812,6 @@ function connectWorldStream() {
     const data = parseStreamData(event);
     if (data.snapshot) {
       applyWorldState(data.snapshot);
-      if (Array.isArray(data.snapshot.orders)) {
-        renderOrders(data.snapshot.orders);
-      }
     }
     runtimeState.worldConnected = true;
     setStreamStatus("All agents are rendered live.");
@@ -729,9 +821,6 @@ function connectWorldStream() {
     const data = parseStreamData(event);
     if (data.world && Array.isArray(data.actors)) {
       applyWorldState(data);
-    }
-    if (Array.isArray(data.orders)) {
-      renderOrders(data.orders);
     }
   });
 
@@ -763,6 +852,7 @@ function connectRuntimeStream() {
   });
 
   const eventTypes = [
+    "order_changed",
     "conversation_message_posted",
     "mention_created",
     "task_created",
@@ -951,6 +1041,7 @@ function bindSessionControls() {
 }
 
 async function boot() {
+  bindRailTabs();
   bindSessionControls();
   if (focusRoomInput) {
     focusRoomInput.value = RUNTIME.roomId;
@@ -992,6 +1083,7 @@ async function boot() {
       return;
     }
     void refreshRuntimeChats().catch(() => {});
+    void refreshRuntimeOrders().catch(() => {});
   }, 30000);
 
   setInterval(() => {
@@ -1005,6 +1097,9 @@ boot().catch((error) => {
   chatList.innerHTML = "";
   inboxList.innerHTML = "";
   presenceList.innerHTML = "";
+  if (presenceListFooter) {
+    presenceListFooter.innerHTML = "";
+  }
   taskList.innerHTML = "";
   roomList.innerHTML = "";
   sessionList.innerHTML = "";

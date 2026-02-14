@@ -21,6 +21,7 @@ const exportTranscriptBtn = document.getElementById("exportTranscriptBtn");
 const sessionFeedback = document.getElementById("sessionFeedback");
 const roomList = document.getElementById("roomList");
 const sessionList = document.getElementById("sessionList");
+const orchestratorMetricsList = document.getElementById("orchestratorMetricsList");
 const railTabButtons = Array.from(document.querySelectorAll("[data-rail-tab]"));
 const railTabPanels = Array.from(document.querySelectorAll("[data-rail-panel]"));
 
@@ -34,6 +35,8 @@ const CELL = 48;
 const DEFAULT_ACTOR_X = Math.floor(WORLD.width / 2);
 const DEFAULT_ACTOR_Y = Math.floor(WORLD.height / 2);
 const DEFAULT_BUBBLE_TTL_MS = 7000;
+const WORLD_STALE_ACTOR_MS = 5 * 60 * 1000;
+const WORLD_RESYNC_IDLE_MS = 45 * 1000;
 const MENU = [
   {
     id: "espresso_make_no_mistake",
@@ -80,6 +83,7 @@ const runtimeState = {
   rooms: [],
   sessions: [],
   tasks: [],
+  orchestratorMetrics: [],
   runtimeConnected: false,
   lastRuntimeEventAt: null,
   worldActorsById: new Map()
@@ -106,6 +110,11 @@ const ROOM_EVENT_TYPES = new Set([
   "table_session_created",
   "table_session_updated",
   "table_session_ended"
+]);
+
+const ORCHESTRATOR_METRICS_EVENT_TYPES = new Set([
+  "shared_object_created",
+  "shared_object_updated"
 ]);
 
 const WORLD_EVENT_TYPES = new Set([
@@ -535,6 +544,54 @@ function renderSessions(sessions) {
   }
 }
 
+function toOrchestratorMetricRow(object) {
+  if (!object || object.objectType !== "note") {
+    return null;
+  }
+  const key = String(object.objectKey || "");
+  if (!key.startsWith("orchestrator_metrics")) {
+    return null;
+  }
+  const data = object.data && typeof object.data === "object" ? object.data : {};
+  return {
+    objectId: object.objectId,
+    actorId: data.actorId || object.updatedBy || "orchestrator",
+    status: data.status || "unknown",
+    replies: Number(data.replies || 0),
+    acks: Number(data.acks || 0),
+    taskUpdates: Number(data.taskUpdates || 0),
+    readOnlyCooldowns: Number(data.readOnlyCooldowns || 0),
+    routingSkips: Number(data.routingSkips || 0),
+    errors: Number(data.errors || 0),
+    updatedAt: data.updatedAt || object.updatedAt || object.createdAt || null,
+    readOnlyUntil: data.readOnlyUntil || null
+  };
+}
+
+function renderOrchestratorMetrics(rows) {
+  if (!orchestratorMetricsList) {
+    return;
+  }
+  orchestratorMetricsList.innerHTML = "";
+  for (const item of rows) {
+    const li = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = `${item.actorId} (${item.status})`;
+    const summary = document.createElement("div");
+    summary.className = "meta";
+    summary.textContent =
+      `replies ${item.replies} | acks ${item.acks} | tasks ${item.taskUpdates} | ` +
+      `read-only ${item.readOnlyCooldowns} | skipped ${item.routingSkips} | errors ${item.errors}`;
+    const stamp = document.createElement("div");
+    stamp.className = "meta";
+    stamp.textContent = `updated ${formatTime(item.updatedAt)}${
+      item.readOnlyUntil ? ` | cooldown until ${formatTime(item.readOnlyUntil)}` : ""
+    }`;
+    li.append(title, summary, stamp);
+    orchestratorMetricsList.appendChild(li);
+  }
+}
+
 function parseStreamData(event) {
   try {
     return JSON.parse(event.data || "{}");
@@ -670,7 +727,27 @@ function moveActorPosition(actor, direction, steps) {
   }
 }
 
-function applyEventToWorld(map, event) {
+function eventTimestampMs(event) {
+  const parsed = Date.parse(event?.timestamp || "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : Date.now();
+}
+
+function pruneWorldActors(map, now = Date.now()) {
+  let changed = false;
+  for (const [actorId, actor] of map.entries()) {
+    const lastActiveAt = Number(actor?.lastActiveAt || 0);
+    const stale = !lastActiveAt || now - lastActiveAt > WORLD_STALE_ACTOR_MS;
+    const inactive = actor?.inCafe === false || String(actor?.status || "").toLowerCase() === "inactive";
+    if (stale || inactive) {
+      map.delete(actorId);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function applyEventToWorld(map, event, options = {}) {
+  const source = options.source === "replay" ? "replay" : "live";
   const type = event?.type;
   const actorId = event?.actorId;
   if (!type || !actorId) {
@@ -683,7 +760,7 @@ function applyEventToWorld(map, event) {
   }
 
   const actor = ensureWorldActor(map, actorId);
-  actor.lastActiveAt = Date.parse(event.timestamp || "") || Date.now();
+  actor.lastActiveAt = eventTimestampMs(event);
 
   if (type === "agent_entered") {
     actor.inCafe = true;
@@ -718,14 +795,16 @@ function applyEventToWorld(map, event) {
 
   if (type === "conversation_message_posted") {
     actor.inCafe = true;
-    actor.status = "thinking";
-    const text = event?.payload?.conversation?.text || event?.payload?.bubble?.text || "";
-    if (text) {
-      const ttlMs = clamp(Number(event?.payload?.bubble?.ttlMs || DEFAULT_BUBBLE_TTL_MS), 2000, 30000);
-      actor.bubble = {
-        text,
-        expiresAt: Date.now() + ttlMs
-      };
+    if (source === "live") {
+      actor.status = "thinking";
+      const text = event?.payload?.conversation?.text || event?.payload?.bubble?.text || "";
+      if (text) {
+        const ttlMs = clamp(Number(event?.payload?.bubble?.ttlMs || DEFAULT_BUBBLE_TTL_MS), 2000, 30000);
+        actor.bubble = {
+          text,
+          expiresAt: Date.now() + ttlMs
+        };
+      }
     }
     return;
   }
@@ -753,19 +832,26 @@ function applyEventToWorld(map, event) {
   if (type === "status_changed") {
     const toStatus = event?.payload?.toStatus || event?.payload?.to || actor.status;
     actor.status = toStatus;
-    actor.inCafe = toStatus !== "inactive" ? true : actor.inCafe;
+    if (toStatus === "inactive") {
+      actor.inCafe = false;
+      actor.bubble = null;
+    } else {
+      actor.inCafe = true;
+    }
   }
 }
 
 function applyWorldFromMap() {
+  pruneWorldActors(runtimeState.worldActorsById);
   WORLD.actors = [...runtimeState.worldActorsById.values()]
     .filter((actor) => actor.inCafe)
     .sort((a, b) => String(a.id).localeCompare(String(b.id)));
   render();
 }
 
-function projectWorldFromEvents(events = []) {
+function projectWorldFromEvents(events = [], options = {}) {
   const map = new Map();
+  const source = options.source === "live" ? "live" : "replay";
   const ordered = [...events].sort((a, b) => {
     const as = Number(a?.sequence || 0);
     const bs = Number(b?.sequence || 0);
@@ -776,7 +862,7 @@ function projectWorldFromEvents(events = []) {
   });
 
   for (const event of ordered) {
-    applyEventToWorld(map, event);
+    applyEventToWorld(map, event, { source });
   }
 
   for (const presence of runtimeState.presence) {
@@ -785,16 +871,22 @@ function projectWorldFromEvents(events = []) {
     }
     const actor = ensureWorldActor(map, presence.actorId);
     actor.status = presence.status || actor.status;
-    actor.inCafe = true;
+    actor.lastActiveAt =
+      Date.parse(presence.lastHeartbeatAt || presence.updatedAt || presence.createdAt || "") || actor.lastActiveAt;
+    actor.inCafe = String(actor.status || "").toLowerCase() !== "inactive";
+    if (!actor.inCafe) {
+      actor.bubble = null;
+    }
   }
 
+  pruneWorldActors(map);
   runtimeState.worldActorsById = map;
   applyWorldFromMap();
 }
 
 function sweepWorldBubbles() {
   const now = Date.now();
-  let changed = false;
+  let changed = pruneWorldActors(runtimeState.worldActorsById, now);
   for (const actor of runtimeState.worldActorsById.values()) {
     if (actor.bubble && Number(actor.bubble.expiresAt || 0) <= now) {
       actor.bubble = null;
@@ -806,7 +898,8 @@ function sweepWorldBubbles() {
   }
 }
 
-async function refreshRuntimeWorld() {
+async function refreshRuntimeWorld(options = {}) {
+  const source = options.source === "live" ? "live" : "replay";
   const replayPath =
     `/v1/replay?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
     `&roomId=${encodeURIComponent(RUNTIME.roomId)}&minutes=120`;
@@ -823,7 +916,7 @@ async function refreshRuntimeWorld() {
     events = timelinePayload?.data?.events || [];
   }
 
-  projectWorldFromEvents(events);
+  projectWorldFromEvents(events, { source });
 }
 
 async function refreshRuntimeChats() {
@@ -906,6 +999,20 @@ async function refreshRuntimeSessions() {
   updateRoomModeText();
 }
 
+async function refreshRuntimeOrchestratorMetrics() {
+  const path =
+    `/v1/objects?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&objectType=note&limit=200`;
+  const payload = await api(path);
+  const objects = Array.isArray(payload?.data?.objects) ? payload.data.objects : [];
+  runtimeState.orchestratorMetrics = objects
+    .map(toOrchestratorMetricRow)
+    .filter(Boolean)
+    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
+    .slice(0, 10);
+  renderOrchestratorMetrics(runtimeState.orchestratorMetrics);
+}
+
 async function refreshRuntimePanels() {
   const results = await Promise.allSettled([
     refreshRuntimeChats(),
@@ -914,7 +1021,8 @@ async function refreshRuntimePanels() {
     refreshRuntimePresence(),
     refreshRuntimeTasks(),
     refreshRuntimeRooms(),
-    refreshRuntimeSessions()
+    refreshRuntimeSessions(),
+    refreshRuntimeOrchestratorMetrics()
   ]);
   const rejected = results.find((item) => item.status === "rejected");
   if (rejected && rejected.reason) {
@@ -958,11 +1066,17 @@ const refreshRuntimeSessionsDebounced = debounce(() => {
   });
 }, 250);
 
+const refreshRuntimeOrchestratorMetricsDebounced = debounce(() => {
+  refreshRuntimeOrchestratorMetrics().catch((error) => {
+    setRuntimeStatus(error instanceof Error ? error.message : String(error));
+  });
+}, 250);
+
 function handleRuntimeEvent(data) {
   runtimeState.lastRuntimeEventAt = Date.now();
 
   if (WORLD_EVENT_TYPES.has(data.type)) {
-    applyEventToWorld(runtimeState.worldActorsById, data);
+    applyEventToWorld(runtimeState.worldActorsById, data, { source: "live" });
     applyWorldFromMap();
   }
 
@@ -1006,6 +1120,13 @@ function handleRuntimeEvent(data) {
     refreshRuntimeRoomsDebounced();
     refreshRuntimeSessionsDebounced();
   }
+
+  if (ORCHESTRATOR_METRICS_EVENT_TYPES.has(data.type)) {
+    const objectKey = data?.payload?.objectKey || "";
+    if (String(objectKey).startsWith("orchestrator_metrics")) {
+      refreshRuntimeOrchestratorMetricsDebounced();
+    }
+  }
 }
 
 function connectRuntimeStream() {
@@ -1043,7 +1164,9 @@ function connectRuntimeStream() {
     "room_updated",
     "table_session_created",
     "table_session_updated",
-    "table_session_ended"
+    "table_session_ended",
+    "shared_object_created",
+    "shared_object_updated"
   ];
 
   for (const eventType of eventTypes) {
@@ -1261,12 +1384,20 @@ async function boot() {
     }
     void refreshRuntimeChats().catch(() => {});
     void refreshRuntimeOrders().catch(() => {});
-    void refreshRuntimeWorld().catch(() => {});
   }, 30000);
+
+  setInterval(() => {
+    const quietForMs = runtimeState.lastRuntimeEventAt == null ? Number.POSITIVE_INFINITY : Date.now() - runtimeState.lastRuntimeEventAt;
+    if (runtimeState.runtimeConnected && quietForMs < WORLD_RESYNC_IDLE_MS) {
+      return;
+    }
+    void refreshRuntimeWorld().catch(() => {});
+  }, WORLD_RESYNC_IDLE_MS);
 
   setInterval(() => {
     void refreshRuntimeRooms().catch(() => {});
     void refreshRuntimeSessions().catch(() => {});
+    void refreshRuntimeOrchestratorMetrics().catch(() => {});
   }, 30000);
 
   setInterval(() => {
@@ -1285,6 +1416,9 @@ boot().catch((error) => {
   taskList.innerHTML = "";
   roomList.innerHTML = "";
   sessionList.innerHTML = "";
+  if (orchestratorMetricsList) {
+    orchestratorMetricsList.innerHTML = "";
+  }
   const li = document.createElement("li");
   li.textContent = error instanceof Error ? error.message : String(error);
   ordersList.appendChild(li);

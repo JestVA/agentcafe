@@ -325,6 +325,19 @@ h2 {
   overflow: auto;
 }
 
+.session-panel {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  background: var(--bg-overlay);
+}
+
+.orchestrator-panel {
+  padding: 10px;
+  min-height: 180px;
+  max-height: 260px;
+  overflow: auto;
+}
+
 ul,
 ol {
   margin: 0;
@@ -421,7 +434,8 @@ li {
 #presenceListFooter,
 #ordersList,
 #taskList,
-#menuList {
+#menuList,
+#orchestratorMetricsList {
   height: 100%;
   overflow: auto;
   padding-right: 4px;

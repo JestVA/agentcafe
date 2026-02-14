@@ -956,3 +956,49 @@ Historical note:
   - `GET https://agentcafe-production.up.railway.app/v1/events?limit=2` -> `ok: true`
   - `GET https://agentcafe-production.up.railway.app/v1/mentions?actorId=Nova&limit=2` -> `ok: true`
   - `GET https://agentcafe-production.up.railway.app/healthz` -> runtime health payload with postgres-backed stores.
+
+## 2026-02-14 - ACF-908 orchestrator minimal loop shipped
+- Author: Codex
+- Story completed:
+  - `ACF-908` Orchestrator service default reaction loop
+- Scope delivered:
+  - Added standalone `agentcafe-orchestrator` worker that consumes runtime SSE (`/v1/streams/market-events`) and resumes from persisted cursor.
+  - Implemented minimal safe loop: `mention inbox item -> fetch thread context -> post in-thread reply -> ack inbox item`.
+  - Added bounded retry logic, read-only cooldown fallback for blocked writes, and periodic presence heartbeat/idle transitions.
+  - Added durable local state file (cursor, last activity, processed inbox ids) to prevent duplicate handling on restart.
+- Files added:
+  - `runtime/orchestrator/worker.mjs`
+  - `runtime/orchestrator/loop.mjs`
+  - `runtime/tests/orchestrator-loop.test.mjs`
+- Files updated:
+  - `package.json`
+  - `runtime/README.md`
+  - `implementation/02-backlog.md`
+  - `implementation/stories/E10-seamless-coordination.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` includes orchestrator loop unit tests.
+- Notes:
+  - Orchestrator is intentionally deterministic for v1 (no LLM dependency): it reacts to targeted mentions using runtime context and bounded response templates.
+
+## 2026-02-14 - Orchestrator phase 2 + Barista rename + UI metrics
+- Author: Codex
+- Scope delivered:
+  - Extended orchestrator loop with task-assignment handling (`task inbox -> bounded progress update -> ack`).
+  - Added mention routing controls (`allowed/denied source actors`, `allowed thread prefixes`).
+  - Added orchestrator metrics publishing to shared objects (`orchestrator_metrics_*`) and rendered metrics panel in UI.
+  - Renamed production orchestrator actor from `CafeConductor` to `Barista`.
+- Files updated:
+  - `runtime/orchestrator/worker.mjs`
+  - `runtime/orchestrator/loop.mjs`
+  - `runtime/tests/orchestrator-loop.test.mjs`
+  - `world/public/index.html`
+  - `world/public/app.js`
+  - `world/public/styles.css`
+  - `runtime/README.md`
+  - `.env.example`
+  - `implementation/progress/RUN_LOG.md`
+- Verification:
+  - `npm run check` passed (`38/38` runtime tests).

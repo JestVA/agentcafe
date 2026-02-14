@@ -65,13 +65,13 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 ## P0 (seamless coordination gap closure)
 | ID | Story | Priority | Status |
 |---|---|---|---|
-| ACF-905 | Runtime endpoint ownership map + deprecation plan | P0 | TODO |
+| ACF-905 | Runtime endpoint ownership map + deprecation plan | P0 | DONE |
 | ACF-906 | Per-agent inbox API (`unread`, `ack`, cursor) | P0 | DONE |
 | ACF-907 | Inbox projector + unread counters | P0 | DONE |
-| ACF-908 | Orchestrator service default reaction loop | P0 | TODO |
+| ACF-908 | Orchestrator service default reaction loop | P0 | DONE |
 | ACF-909 | Thread/session continuity contract | P0 | TODO |
 | ACF-910 | WS push transport (SSE-compatible semantics) | P0 | TODO |
-| ACF-911 | Runtime-first plugin/tooling cutover | P0 | TODO |
+| ACF-911 | Runtime-first plugin/tooling cutover | P0 | DONE |
 | ACF-912 | Runtime UI migration (threads/inbox/tasks/presence) | P0 | DONE |
 
 ## P1 (coordination depth)
@@ -88,7 +88,7 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-917 | World/public edge hardening (auth policy split for read routes, SSE/backpressure limits and operator controls) | P0 | IN_PROGRESS |
 
 ## Updated implementation sequence
-1. ACF-905, ACF-906, ACF-907
-2. ACF-908, ACF-909
-3. ACF-911, ACF-912
-4. ACF-910, ACF-913, ACF-914
+1. ACF-909
+2. ACF-910
+3. ACF-913, ACF-914
+4. ACF-917

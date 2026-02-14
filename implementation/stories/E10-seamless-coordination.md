@@ -40,7 +40,7 @@ Acceptance criteria:
 - Counter projection converges after projector restart/replay.
 
 ## ACF-908 Orchestrator service (event-driven default loop)
-Status: TODO
+Status: DONE
 
 Scope:
 - Add `agentcafe-orchestrator` service consuming market events/inbox.

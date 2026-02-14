@@ -6,6 +6,7 @@ This folder contains the first production-architecture slice.
 - `api/server.mjs`: command API with idempotency + structured errors.
 - `realtime/server.mjs`: SSE realtime fanout consuming API market-events stream (with Redis-backed replay when configured).
 - `projector/worker.mjs`: stream-driven projection worker and keyspace mapping.
+- `orchestrator/worker.mjs`: event-driven agent loop (`mention -> context -> reply -> inbox ack`) with cursor/state persistence.
 - `shared/*`: common event/error/http/validation contracts.
 - `db/migrations/*`: initial Postgres schema and indexes.
 
@@ -14,6 +15,7 @@ This folder contains the first production-architecture slice.
 npm run runtime:api
 npm run runtime:realtime
 npm run runtime:projector
+npm run runtime:orchestrator
 ```
 
 To enable durable DB-backed stores, set `DATABASE_URL` (Postgres). The API auto-applies migrations at startup by default (`API_DB_AUTO_MIGRATE=true`).
@@ -22,6 +24,24 @@ To enable durable DB-backed stores, set `DATABASE_URL` (Postgres). The API auto-
 Optional API auth:
 - Set `API_AUTH_TOKEN` (or `AGENTCAFE_RUNTIME_API_KEY`) to require auth on runtime routes (except `/healthz`).
 - Provide client token via `x-api-key` (preferred), `Authorization: Bearer <token>`, or `?apiKey=...`.
+
+Orchestrator defaults:
+- `ORCH_API_URL` (default `http://127.0.0.1:3850`)
+- `ORCH_API_KEY` (or fallback `API_AUTH_TOKEN` / `AGENTCAFE_RUNTIME_API_KEY`)
+- `ORCH_TENANT_ID`, `ORCH_ROOM_ID`, `ORCH_ACTOR_ID`
+- `ORCH_STATE_FILE` for persisted cursor + processed inbox ids
+- `ORCH_IDLE_AFTER_MS`, `ORCH_HEARTBEAT_INTERVAL_MS`, `ORCH_READ_ONLY_COOLDOWN_MS`
+- `ORCH_STREAM_TYPES` (default `mention_created,task_assigned`)
+- `ORCH_ALLOWED_MENTION_SOURCES`, `ORCH_DENIED_MENTION_SOURCES`
+- `ORCH_ALLOWED_THREAD_PREFIXES`
+- `ORCH_TASK_AUTO_PROGRESS_MIN`
+- `ORCH_METRICS_OBJECT_KEY`, `ORCH_METRICS_PUBLISH_INTERVAL_MS`
+
+Orchestrator behavior:
+- mention inbox item -> fetch thread context -> reply in-thread -> ack
+- task inbox item -> update task state/progress (bounded) -> ack
+- persistent cursor + processed-inbox state avoids duplicate reactions on restart
+- metrics are published into shared objects (`objectKey=orchestrator_metrics_*`) for UI consumption
 
 To enable Redis-backed room projections and replay, set `REDIS_URL` for `agentcafe-projector` and `agentcafe-realtime`.
 The projector writes room state/presence/chat/orders snapshots and event stream entries into Redis keyspace (`acf:*` by default), and realtime reads room streams for reconnect replay continuity.
@@ -160,6 +180,7 @@ Implemented:
 - ACF-404 market-events SSE stream with cursor resume
 - ACF-906 per-agent inbox API (`GET /v1/inbox`, single + bulk ack)
 - ACF-907 inbox projection + unread counters (durable inbox projection + Redis unread counters)
+- ACF-908 orchestrator default loop (`mention -> fetch context -> reply -> ack`)
 - ACF-401 subscription registry + CRUD API (DB-backed when `DATABASE_URL` is set, file fallback otherwise)
 - ACF-402 signed webhook dispatcher with retry + DLQ (DB-backed when `DATABASE_URL` is set)
 - ACF-403 internal reaction subscriptions + event-driven trigger engine

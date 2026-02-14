@@ -1,0 +1,329 @@
+# Run Log
+
+Append one section per implementation run.
+
+## 2026-02-14 - Planning baseline created
+- Author: Codex
+- Stories touched: planning only (no story implemented yet)
+- Files added:
+  - `implementation/README.md`
+  - `implementation/00-roadmap.md`
+  - `implementation/01-architecture.md`
+  - `implementation/02-backlog.md`
+  - `implementation/stories/E0-foundation.md`
+  - `implementation/stories/E1-identity-presence.md`
+  - `implementation/stories/E2-conversation.md`
+  - `implementation/stories/E3-memory-context.md`
+  - `implementation/stories/E4-events-automation.md`
+  - `implementation/stories/E5-api-ergonomics.md`
+  - `implementation/stories/E6-replay.md`
+  - `implementation/stories/E7-game-loops.md`
+  - `implementation/stories/E8-safety-operator.md`
+  - `implementation/stories/E9-migration-cutover.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Notes:
+  - This run establishes backlog and tracking structure.
+  - No production architecture code implemented yet.
+
+## 2026-02-14 - Backlog refinement from Nova feedback
+- Author: Codex
+- Stories touched: planning only (no runtime code changes)
+- Added stories:
+  - `ACF-205` conversation object schema
+  - `ACF-304` memory snapshot protocol (TTL + versioning)
+  - `ACF-404` cafe event stream API
+  - `ACF-604` action trace observability
+  - `ACF-704` agent intent layer (`navigate_to`, `sit_at_table`)
+- Files updated:
+  - `implementation/01-architecture.md`
+  - `implementation/02-backlog.md`
+  - `implementation/stories/E2-conversation.md`
+  - `implementation/stories/E3-memory-context.md`
+  - `implementation/stories/E4-events-automation.md`
+  - `implementation/stories/E6-replay.md`
+  - `implementation/stories/E7-game-loops.md`
+  - `implementation/progress/STORY_STATUS.md`
+- Notes:
+  - Nova recommendations are now first-class backlog items with acceptance criteria.
+
+## 2026-02-14 - Phase 1 runtime scaffold implemented
+- Author: Codex
+- Stories completed:
+  - `ACF-001` Service skeleton (`api`, `realtime`, `projector`)
+  - `ACF-002` Postgres schema + migrations
+  - `ACF-003` Redis keyspace + first projector
+  - `ACF-501` Idempotency middleware for writes
+  - `ACF-502` Structured error envelope
+  - `ACF-503` Rate-limit headers
+- Files added:
+  - `runtime/README.md`
+  - `runtime/shared/errors.mjs`
+  - `runtime/shared/http.mjs`
+  - `runtime/shared/events.mjs`
+  - `runtime/shared/validate.mjs`
+  - `runtime/api/server.mjs`
+  - `runtime/api/idempotency-store.mjs`
+  - `runtime/api/event-store.mjs`
+  - `runtime/api/rate-limit.mjs`
+  - `runtime/realtime/server.mjs`
+  - `runtime/projector/worker.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/projector/redis-keyspace.md`
+  - `runtime/db/README.md`
+  - `runtime/db/migrations/001_initial.sql`
+  - `runtime/db/migrations/002_indexes.sql`
+- Files updated:
+  - `package.json`
+  - `.env.example`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed (world + plugin + runtime syntax checks)
+- Notes:
+  - Runtime persistence adapters are intentionally stubbed/in-memory for now; schema and keyspace are in place for next integration run.
+
+## 2026-02-14 - Conversation/stream/snapshot/intent/trace slice implemented
+- Author: Codex
+- Stories completed:
+  - `ACF-205` Conversation object schema
+  - `ACF-304` Memory snapshot protocol (TTL + versioning)
+  - `ACF-404` Cafe event stream API (SSE + cursor resume + actor/type filters)
+  - `ACF-604` Action traces + reason-code telemetry
+  - `ACF-704` Agent intent layer (`navigate_to`, `sit_at_table`)
+- Files added:
+  - `runtime/shared/conversation.mjs`
+  - `runtime/api/snapshot-store.mjs`
+  - `runtime/api/intent-planner.mjs`
+  - `runtime/api/trace-store.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/api/event-store.mjs`
+  - `runtime/shared/events.mjs`
+  - `runtime/shared/errors.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/README.md`
+  - `package.json`
+  - `.env.example`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/stories/E2-conversation.md`
+  - `implementation/stories/E3-memory-context.md`
+  - `implementation/stories/E4-events-automation.md`
+  - `implementation/stories/E6-replay.md`
+  - `implementation/stories/E7-game-loops.md`
+- Verification:
+  - `npm run check` passed.
+  - Module smoke checks:
+    - conversation object construction and mention extraction
+    - event-store cursor/type/actor filtering
+    - snapshot version progression
+    - trace store lifecycle
+- Notes:
+  - Endpoints are runtime-functional with in-memory stores; persistence adapters remain next-step work.
+
+## 2026-02-14 - ACF-204 realtime stream wiring completed
+- Author: Codex
+- Story completed:
+  - `ACF-204` Realtime room protocol (subscribe/unsubscribe, snapshot + delta semantics)
+- Files added:
+  - `runtime/shared/sse.mjs`
+- Files updated:
+  - `runtime/realtime/server.mjs`
+  - `runtime/projector/worker.mjs`
+  - `runtime/api/event-store.mjs`
+  - `runtime/README.md`
+  - `package.json`
+  - `.env.example`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/stories/E2-conversation.md`
+- Verification:
+  - `npm run check` passed.
+  - SSE parser smoke test passed.
+  - Event store subscription filtering smoke test passed.
+- Notes:
+  - Realtime service now consumes API market-events stream and fans out filtered deltas to clients.
+  - Projector now consumes stream deltas with reconnect + cursor resume.
+
+## 2026-02-14 - Realtime integration + timeline/subscriptions slice
+- Author: Codex
+- Stories updated:
+  - `ACF-201` set to DONE (threaded conversation projection semantics)
+  - `ACF-401` set to IN_PROGRESS (file-backed subscription CRUD implemented)
+  - `ACF-402` set to IN_PROGRESS (signed webhook dispatcher + retries + DLQ implemented)
+  - `ACF-601` set to IN_PROGRESS (timeline endpoint implemented with cursor/time filters)
+  - `ACF-602` set to IN_PROGRESS (replay endpoint implemented over timeline window)
+- Files added:
+  - `runtime/shared/sse.mjs`
+  - `runtime/api/subscription-store.mjs`
+  - `runtime/api/webhook-dispatcher.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/api/event-store.mjs`
+  - `runtime/realtime/server.mjs`
+  - `runtime/projector/worker.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/README.md`
+  - `package.json`
+  - `.env.example`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/stories/E2-conversation.md`
+  - `implementation/stories/E4-events-automation.md`
+  - `implementation/stories/E6-replay.md`
+- Verification:
+  - `npm run check` passed.
+  - module smoke checks passed for:
+    - SSE parsing
+    - subscription store create/update/delete + DLQ
+    - event-store actor/time/cursor filtering
+    - threaded projection snapshot integrity
+- Notes:
+  - Subscription persistence is file-backed for now; migration to DB remains next step for full ACF-401 completion criteria.
+  - Timeline/replay endpoints are functional but currently rely on in-memory event store.
+
+## 2026-02-14 - Mention + local memory stabilization
+- Author: Codex
+- Stories completed:
+  - `ACF-202` Mention system (`@name` parsing + mention events + mention query API)
+  - `ACF-301` Local room memory window (`GET /v1/memory/local`, max 5 interactions)
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/README.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/stories/E2-conversation.md`
+  - `implementation/stories/E3-memory-context.md`
+- Verification:
+  - `npm run check` passed.
+- Notes:
+  - Local memory is now available both via API and in projection snapshots.
+  - Core durability stories (ACF-401/402/601/602 DB-backed adapters) remain next.
+
+## 2026-02-14 - DB-backed durability adapters for subscriptions/timeline/replay
+- Author: Codex
+- Stories completed:
+  - `ACF-401` Subscription CRUD with Postgres adapter (file fallback retained)
+  - `ACF-402` Webhook deliveries + DLQ durable persistence in Postgres
+  - `ACF-601` Timeline query API backed by durable DB event scans
+  - `ACF-602` Replay endpoint reading durable DB timeline windows
+- Files added:
+  - `runtime/db/postgres.mjs`
+  - `runtime/api/event-store-pg.mjs`
+  - `runtime/api/subscription-store-pg.mjs`
+  - `runtime/db/migrations/003_webhooks.sql`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/api/webhook-dispatcher.mjs`
+  - `runtime/db/README.md`
+  - `runtime/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+  - `implementation/stories/E4-events-automation.md`
+  - `implementation/stories/E6-replay.md`
+- Verification:
+  - `npm run check` passed.
+- Notes:
+  - API auto-selects Postgres adapters when `DATABASE_URL` is set; otherwise it falls back to file/in-memory stores.
+  - Added migration `003_webhooks.sql`; apply migrations before enabling DB mode in production.
+
+## 2026-02-14 - ACF-603 deterministic replay tests
+- Author: Codex
+- Story completed:
+  - `ACF-603` Deterministic replay verification tests
+- Files added:
+  - `runtime/tests/replay-determinism.test.mjs`
+- Files updated:
+  - `package.json`
+  - `implementation/stories/E6-replay.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 3 passed, 0 failed.
+- Notes:
+  - Tests verify deterministic projection snapshots across repeated runs, shuffled input (sorted by replay cursor/sequence), and bounded time-window replay behavior.
+
+## 2026-02-14 - ACF-302 pinned room context
+- Author: Codex
+- Story completed:
+  - `ACF-302` Pinned room context API + realtime projection
+- Files added:
+  - `runtime/api/pinned-context-store.mjs`
+  - `runtime/api/pinned-context-store-pg.mjs`
+  - `runtime/db/migrations/004_room_context.sql`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/shared/events.mjs`
+  - `runtime/db/README.md`
+  - `runtime/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E3-memory-context.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+- Notes:
+  - New endpoints: `GET /v1/rooms/context/pin` and `POST /v1/rooms/context/pin` (idempotent write).
+  - API auto-selects Postgres persistence when `DATABASE_URL` is configured; file-backed fallback uses `ROOM_CONTEXT_FILE`.
+  - Pin writes emit `room_context_pinned` events and are reflected in projection snapshots (`pinnedContext`).
+
+## 2026-02-14 - ACF-303 pinned context revision history
+- Author: Codex
+- Story completed:
+  - `ACF-303` Context revision history
+- Files added:
+  - `runtime/tests/pinned-context-history.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/README.md`
+  - `package.json`
+  - `implementation/stories/E3-memory-context.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 4 passed, 0 failed.
+- Notes:
+  - Added `GET /v1/rooms/context/history` with `tenantId`, `roomId`, and `limit`.
+  - History responses include prior versions with actor (`pinnedBy`) and timestamps for auditability.
+
+## 2026-02-14 - ACF-801 permission matrix enforcement
+- Author: Codex
+- Story completed:
+  - `ACF-801` Per-agent permission matrix enforcement
+- Files added:
+  - `runtime/api/permission-store.mjs`
+  - `runtime/api/permission-store-pg.mjs`
+  - `runtime/tests/permission-store.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/shared/errors.mjs`
+  - `runtime/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E8-safety-operator.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 5 passed, 0 failed.
+- Notes:
+  - Enforcement now blocks unauthorized command/intent/context-pin writes with `ERR_FORBIDDEN` (HTTP 403).
+  - Added permissions management API: `GET /v1/permissions`, `POST /v1/permissions`.

@@ -1,6 +1,6 @@
 {
   "name": "agentcafe",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AgentCafe world + OpenClaw plugin scaffold",
   "type": "module",
   "main": "plugin/index.js",
@@ -14,8 +14,14 @@
     "plugin",
     "world",
     "README.md",
-    ".env.example"
+    ".env.example",
+    "openclaw.plugin.json"
   ],
+  "openclaw": {
+    "extensions": [
+      "./plugin/index.js"
+    ]
+  },
   "scripts": {
     "start": "node world/server.mjs",
     "world": "node world/server.mjs",

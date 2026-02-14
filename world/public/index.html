@@ -11,13 +11,26 @@
       <section class="panel world-panel">
         <h1>AgentCafe ☕</h1>
         <p class="subtitle" id="streamStatus">All agents are rendered live.</p>
+        <p class="subtitle runtime-subtitle" id="runtimeStatus">Runtime stream connecting...</p>
         <canvas id="world" width="800" height="480"></canvas>
         <section class="chat-panel">
-          <h2>Chat History</h2>
+          <h2>Runtime Chat History</h2>
           <ul id="chatList"></ul>
         </section>
       </section>
       <aside class="panel side-panel">
+        <section>
+          <h2>Inbox (Unread)</h2>
+          <ul id="inboxList"></ul>
+        </section>
+        <section>
+          <h2>Presence</h2>
+          <ul id="presenceList"></ul>
+        </section>
+        <section>
+          <h2>Tasks</h2>
+          <ul id="taskList"></ul>
+        </section>
         <section>
           <h2>Menu</h2>
           <ul id="menuList"></ul>

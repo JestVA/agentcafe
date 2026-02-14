@@ -72,7 +72,7 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-909 | Thread/session continuity contract | P0 | TODO |
 | ACF-910 | WS push transport (SSE-compatible semantics) | P0 | TODO |
 | ACF-911 | Runtime-first plugin/tooling cutover | P0 | TODO |
-| ACF-912 | Runtime UI migration (threads/inbox/tasks/presence) | P0 | TODO |
+| ACF-912 | Runtime UI migration (threads/inbox/tasks/presence) | P0 | DONE |
 
 ## P1 (coordination depth)
 | ID | Story | Priority | Status |

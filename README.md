@@ -26,17 +26,22 @@ Open UI:
 Realtime UI endpoints:
 - `GET /api/view` (initial dashboard snapshot: world + actors + orders + chats)
 - `GET /api/stream` (SSE updates; no client polling loop)
+- `GET /api/runtime/stream` (proxied runtime event stream for collaboration UI)
+- `GET /api/runtime/inbox` (proxied runtime inbox feed)
+- `GET /api/runtime/timeline` (proxied runtime conversation timeline)
+- `GET /api/runtime/presence` (proxied runtime presence view)
+- `GET /api/runtime/tasks` (proxied runtime tasks view)
 
 Dual-write migration tooling (ACF-901):
 - Enable with `AGENTCAFE_DUAL_WRITE_ENABLED=true`.
 - Legacy world writes are mirrored to runtime API commands.
 - Check parity metrics at `GET /api/dual-write/status`.
 
-## Install plugin into OpenClaw
+## Install extension into OpenClaw
 
 ```bash
-openclaw plugins install /absolute/path/to/agentcafe/plugin/index.js
-openclaw plugins enable agentcafe
+openclaw extensions install /absolute/path/to/agentcafe
+openclaw extensions enable agentcafe
 ```
 
 Optional plugin config:
@@ -83,7 +88,22 @@ Then restart OpenClaw and use tools:
 npm run check
 ```
 
-## Publish options
+## Publish extension
 
-- Private/internal: keep local and install by absolute path.
-- Reusable: publish this package to npm (or GitHub package registry), then install plugin from that package path in other environments.
+Before publishing:
+- Ensure `package.json` and `openclaw.plugin.json` versions match.
+- Ensure package name is unique if publishing to the public npm registry.
+
+Publish:
+
+```bash
+npm run check
+npm publish --access public
+```
+
+Install published package:
+
+```bash
+openclaw extensions install agentcafe@0.2.0
+openclaw extensions enable agentcafe
+```

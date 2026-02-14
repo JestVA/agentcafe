@@ -3,7 +3,11 @@ const ctx = canvas.getContext("2d");
 const menuList = document.getElementById("menuList");
 const ordersList = document.getElementById("ordersList");
 const chatList = document.getElementById("chatList");
+const inboxList = document.getElementById("inboxList");
+const presenceList = document.getElementById("presenceList");
+const taskList = document.getElementById("taskList");
 const streamStatus = document.getElementById("streamStatus");
+const runtimeStatus = document.getElementById("runtimeStatus");
 
 const WORLD = {
   width: 20,
@@ -12,6 +16,40 @@ const WORLD = {
 };
 
 const CELL = 40;
+const RUNTIME = {
+  tenantId: "default",
+  roomId: "main",
+  chatLimit: 100,
+  inboxLimit: 100,
+  presenceLimit: 100,
+  taskLimit: 100
+};
+
+const runtimeState = {
+  chats: [],
+  chatEventIds: new Set(),
+  inbox: [],
+  presence: [],
+  tasks: [],
+  worldConnected: false,
+  runtimeConnected: false,
+  lastRuntimeEventAt: null
+};
+
+const TASK_EVENT_TYPES = new Set([
+  "task_created",
+  "task_updated",
+  "task_assigned",
+  "task_progress_updated",
+  "task_completed"
+]);
+
+const PRESENCE_EVENT_TYPES = new Set([
+  "agent_entered",
+  "agent_left",
+  "status_changed",
+  "presence_heartbeat"
+]);
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
@@ -232,12 +270,12 @@ function renderMenu(menu) {
   }
 }
 
-function formatTime(ms) {
-  const value = Number(ms);
-  if (!Number.isFinite(value)) {
+function formatTime(value) {
+  const millis = typeof value === "string" ? Date.parse(value) : Number(value);
+  if (!Number.isFinite(millis)) {
     return "unknown time";
   }
-  return new Date(value).toLocaleTimeString([], {
+  return new Date(millis).toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit"
@@ -266,19 +304,73 @@ function renderChats(chats) {
     title.textContent = `${chat.actorId}: ${chat.text}`;
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = formatTime(chat.saidAt);
+    meta.textContent = `${formatTime(chat.saidAt)}${chat.threadId ? ` | thread ${chat.threadId}` : ""}`;
     li.append(title, meta);
     chatList.appendChild(li);
   }
 }
 
-function applyView(data) {
+function inboxSummary(item) {
+  if (item.topic === "mention") {
+    return `mentioned in thread ${item.threadId || "n/a"}`;
+  }
+  if (item.topic === "task") {
+    return `task assigned: ${item.payload?.taskId || "unknown"}`;
+  }
+  if (item.topic === "operator") {
+    return `operator: ${item.payload?.action || "update"}`;
+  }
+  return item.sourceEventType || "event";
+}
+
+function renderInbox(items) {
+  inboxList.innerHTML = "";
+  for (const item of items) {
+    const li = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = `${item.actorId} <- ${item.topic}`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `${inboxSummary(item)} at ${formatTime(item.createdAt)}`;
+    li.append(title, meta);
+    inboxList.appendChild(li);
+  }
+}
+
+function renderPresence(rows) {
+  presenceList.innerHTML = "";
+  for (const item of rows) {
+    const li = document.createElement("li");
+    const title = document.createElement("strong");
+    const activeDot = item.isActive ? "active" : "inactive";
+    title.textContent = `${item.actorId} (${item.status || activeDot})`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `last heartbeat ${formatTime(item.lastHeartbeatAt || item.updatedAt)}`;
+    li.append(title, meta);
+    presenceList.appendChild(li);
+  }
+}
+
+function renderTasks(rows) {
+  taskList.innerHTML = "";
+  for (const task of rows) {
+    const li = document.createElement("li");
+    const title = document.createElement("strong");
+    title.textContent = `${task.title} [${task.state}] ${task.progress}%`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = `assignee ${task.assigneeActorId || "unassigned"} | updated ${formatTime(task.updatedAt)}`;
+    li.append(title, meta);
+    taskList.appendChild(li);
+  }
+}
+
+function applyWorldState(data) {
   WORLD.width = data.world.width;
   WORLD.height = data.world.height;
-  WORLD.actors = data.actors;
+  WORLD.actors = Array.isArray(data.actors) ? data.actors : [];
   render();
-  renderOrders(data.orders || []);
-  renderChats(data.chats || []);
 }
 
 function parseStreamData(event) {
@@ -289,27 +381,184 @@ function parseStreamData(event) {
   }
 }
 
+function toRuntimeChat(event) {
+  const text =
+    event?.payload?.conversation?.text ||
+    event?.payload?.bubble?.text ||
+    event?.payload?.text ||
+    "";
+  if (!text) {
+    return null;
+  }
+  return {
+    eventId: event.eventId,
+    actorId: event.actorId || "agent",
+    text,
+    saidAt: event.timestamp || new Date().toISOString(),
+    threadId:
+      event?.payload?.conversation?.threadId ||
+      event?.payload?.conversation?.messageId ||
+      event?.payload?.threadId ||
+      null
+  };
+}
+
 function setStreamStatus(text) {
   if (streamStatus) {
     streamStatus.textContent = text;
   }
 }
 
-function connectStream() {
+function setRuntimeStatus(text) {
+  if (runtimeStatus) {
+    runtimeStatus.textContent = text;
+  }
+}
+
+function debounce(fn, waitMs) {
+  let timer = null;
+  return (...args) => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, waitMs);
+  };
+}
+
+async function refreshRuntimeChats() {
+  const path =
+    `/api/runtime/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
+    `&types=conversation_message_posted&order=desc&limit=${RUNTIME.chatLimit}`;
+  const payload = await api(path);
+  const events = payload?.data?.events || [];
+  runtimeState.chatEventIds.clear();
+  runtimeState.chats = events
+    .map(toRuntimeChat)
+    .filter(Boolean)
+    .map((chat) => {
+      runtimeState.chatEventIds.add(chat.eventId);
+      return chat;
+    });
+  renderChats(runtimeState.chats);
+}
+
+async function refreshRuntimeInbox() {
+  const path =
+    `/api/runtime/inbox?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
+    `&unreadOnly=true&order=desc&limit=${RUNTIME.inboxLimit}`;
+  const payload = await api(path);
+  runtimeState.inbox = payload?.data?.items || [];
+  renderInbox(runtimeState.inbox);
+}
+
+async function refreshRuntimePresence() {
+  const path =
+    `/api/runtime/presence?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&limit=${RUNTIME.presenceLimit}`;
+  const payload = await api(path);
+  runtimeState.presence = payload?.data?.presence || [];
+  renderPresence(runtimeState.presence);
+}
+
+async function refreshRuntimeTasks() {
+  const path =
+    `/api/runtime/tasks?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&limit=${RUNTIME.taskLimit}`;
+  const payload = await api(path);
+  runtimeState.tasks = payload?.data?.tasks || [];
+  renderTasks(runtimeState.tasks);
+}
+
+async function refreshRuntimePanels() {
+  const results = await Promise.allSettled([
+    refreshRuntimeChats(),
+    refreshRuntimeInbox(),
+    refreshRuntimePresence(),
+    refreshRuntimeTasks()
+  ]);
+  const rejected = results.find((item) => item.status === "rejected");
+  if (rejected && rejected.reason) {
+    throw rejected.reason;
+  }
+}
+
+const refreshRuntimeInboxDebounced = debounce(() => {
+  refreshRuntimeInbox().catch((error) => {
+    setRuntimeStatus(error instanceof Error ? error.message : String(error));
+  });
+}, 250);
+
+const refreshRuntimeTasksDebounced = debounce(() => {
+  refreshRuntimeTasks().catch((error) => {
+    setRuntimeStatus(error instanceof Error ? error.message : String(error));
+  });
+}, 250);
+
+const refreshRuntimePresenceDebounced = debounce(() => {
+  refreshRuntimePresence().catch((error) => {
+    setRuntimeStatus(error instanceof Error ? error.message : String(error));
+  });
+}, 250);
+
+function handleRuntimeEvent(data) {
+  runtimeState.lastRuntimeEventAt = Date.now();
+
+  if (data.type === "conversation_message_posted") {
+    const chat = toRuntimeChat(data);
+    if (!chat || runtimeState.chatEventIds.has(chat.eventId)) {
+      return;
+    }
+    runtimeState.chatEventIds.add(chat.eventId);
+    runtimeState.chats.unshift(chat);
+    runtimeState.chats = runtimeState.chats.slice(0, RUNTIME.chatLimit);
+    renderChats(runtimeState.chats);
+    return;
+  }
+
+  if (
+    data.type === "mention_created" ||
+    data.type === "task_assigned" ||
+    data.type === "operator_override_applied"
+  ) {
+    refreshRuntimeInboxDebounced();
+  }
+
+  if (TASK_EVENT_TYPES.has(data.type)) {
+    refreshRuntimeTasksDebounced();
+  }
+
+  if (PRESENCE_EVENT_TYPES.has(data.type)) {
+    refreshRuntimePresenceDebounced();
+  }
+}
+
+function connectWorldStream() {
   const source = new EventSource("/api/stream");
 
   source.addEventListener("ready", (event) => {
     const data = parseStreamData(event);
     if (data.snapshot) {
-      applyView(data.snapshot);
+      applyWorldState(data.snapshot);
+      if (Array.isArray(data.snapshot.orders)) {
+        renderOrders(data.snapshot.orders);
+      }
     }
+    runtimeState.worldConnected = true;
     setStreamStatus("All agents are rendered live.");
   });
 
   source.addEventListener("state", (event) => {
     const data = parseStreamData(event);
     if (data.world && Array.isArray(data.actors)) {
-      applyView(data);
+      applyWorldState(data);
+    }
+    if (Array.isArray(data.orders)) {
+      renderOrders(data.orders);
     }
   });
 
@@ -318,23 +567,105 @@ function connectStream() {
   });
 
   source.onerror = () => {
-    setStreamStatus("Realtime stream reconnecting...");
+    runtimeState.worldConnected = false;
+    setStreamStatus("World stream reconnecting...");
+  };
+
+  return source;
+}
+
+function connectRuntimeStream() {
+  const source = new EventSource(
+    `/api/runtime/stream?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&roomId=${encodeURIComponent(RUNTIME.roomId)}`
+  );
+
+  source.addEventListener("ready", () => {
+    runtimeState.runtimeConnected = true;
+    setRuntimeStatus("Runtime stream live. All agents are rendered live.");
+  });
+
+  source.addEventListener("heartbeat", () => {
+    runtimeState.lastRuntimeEventAt = Date.now();
+    setRuntimeStatus("Runtime stream live. All agents are rendered live.");
+  });
+
+  const eventTypes = [
+    "conversation_message_posted",
+    "mention_created",
+    "task_created",
+    "task_updated",
+    "task_assigned",
+    "task_progress_updated",
+    "task_completed",
+    "operator_override_applied",
+    "agent_entered",
+    "agent_left",
+    "status_changed",
+    "presence_heartbeat"
+  ];
+
+  for (const eventType of eventTypes) {
+    source.addEventListener(eventType, (event) => {
+      const data = parseStreamData(event);
+      if (data && typeof data === "object") {
+        handleRuntimeEvent(data);
+      }
+    });
+  }
+
+  source.onerror = () => {
+    runtimeState.runtimeConnected = false;
+    setRuntimeStatus("Runtime stream reconnecting...");
   };
 
   return source;
 }
 
 async function boot() {
-  const [menuData, viewData] = await Promise.all([api("/api/menu"), api("/api/view")]);
+  const [menuData, stateData, ordersData] = await Promise.all([
+    api("/api/menu"),
+    api("/api/state"),
+    api("/api/orders?limit=50")
+  ]);
+
   renderMenu(menuData.menu || []);
-  applyView(viewData);
-  connectStream();
+  applyWorldState(stateData);
+  renderOrders(ordersData.orders || []);
+
+  try {
+    await refreshRuntimePanels();
+  } catch (error) {
+    setRuntimeStatus(error instanceof Error ? error.message : String(error));
+  }
+
+  connectWorldStream();
+  connectRuntimeStream();
+
+  setInterval(() => {
+    if (!runtimeState.runtimeConnected) {
+      return;
+    }
+    void refreshRuntimeInbox().catch(() => {});
+    void refreshRuntimeTasks().catch(() => {});
+    void refreshRuntimePresence().catch(() => {});
+  }, 15000);
+
+  setInterval(() => {
+    if (!runtimeState.runtimeConnected) {
+      return;
+    }
+    void refreshRuntimeChats().catch(() => {});
+  }, 30000);
 }
 
 boot().catch((error) => {
   ordersList.innerHTML = "";
   chatList.innerHTML = "";
+  inboxList.innerHTML = "";
+  presenceList.innerHTML = "";
+  taskList.innerHTML = "";
   const li = document.createElement("li");
   li.textContent = error instanceof Error ? error.message : String(error);
   ordersList.appendChild(li);
+  setRuntimeStatus(li.textContent);
 });

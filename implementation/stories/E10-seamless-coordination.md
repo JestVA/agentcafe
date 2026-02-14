@@ -91,7 +91,7 @@ Acceptance criteria:
 - Legacy mode remains opt-in and clearly flagged.
 
 ## ACF-912 Runtime UI migration (threads/inbox/tasks/presence)
-Status: TODO
+Status: DONE
 
 Scope:
 - Migrate UI data model from legacy snapshots to runtime APIs.

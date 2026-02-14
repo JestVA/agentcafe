@@ -30,6 +30,7 @@ const DUAL_WRITE_RUNTIME_API_URL = String(
   process.env.AGENTCAFE_RUNTIME_API_URL || "http://127.0.0.1:3850"
 ).replace(/\/$/, "");
 const DUAL_WRITE_TIMEOUT_MS = Math.max(250, Number(process.env.AGENTCAFE_DUAL_WRITE_TIMEOUT_MS || 3000));
+const RUNTIME_PROXY_TIMEOUT_MS = Math.max(250, Number(process.env.AGENTCAFE_RUNTIME_PROXY_TIMEOUT_MS || 6000));
 const DUAL_WRITE_HISTORY_LIMIT = Math.max(
   10,
   Math.min(Number(process.env.AGENTCAFE_DUAL_WRITE_HISTORY_LIMIT || 200), 2000)
@@ -226,6 +227,114 @@ async function replicateRuntimeWrite(action, input = {}) {
   }
 }
 
+function runtimeProxyPath(pathname, searchParams) {
+  const target = new URL(`${DUAL_WRITE_RUNTIME_API_URL}${pathname}`);
+  for (const [key, value] of searchParams.entries()) {
+    target.searchParams.set(key, value);
+  }
+  return target;
+}
+
+async function proxyRuntimeJson(req, res, url, runtimePathname) {
+  const upstreamUrl = runtimeProxyPath(runtimePathname, url.searchParams);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, RUNTIME_PROXY_TIMEOUT_MS);
+
+  try {
+    const init = {
+      method: req.method,
+      headers: {
+        accept: "application/json"
+      },
+      signal: controller.signal
+    };
+
+    if (req.method !== "GET") {
+      const body = await readBody(req);
+      init.headers["content-type"] = "application/json";
+      init.body = JSON.stringify(body || {});
+    }
+
+    const upstreamRes = await fetch(upstreamUrl, init);
+    const raw = await upstreamRes.text();
+    let payload = null;
+    try {
+      payload = raw ? JSON.parse(raw) : { ok: upstreamRes.ok };
+    } catch {
+      payload = {
+        ok: false,
+        error: `invalid JSON response from runtime (${upstreamRes.status})`
+      };
+    }
+
+    res.writeHead(upstreamRes.status, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store"
+    });
+    res.end(JSON.stringify(payload));
+  } catch (error) {
+    sendError(res, 502, error instanceof Error ? error.message : String(error));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function proxyRuntimeSse(req, res, url) {
+  const upstreamUrl = runtimeProxyPath("/v1/streams/market-events", url.searchParams);
+  const controller = new AbortController();
+  let reader = null;
+
+  req.on("close", () => {
+    controller.abort();
+    if (reader) {
+      void reader.cancel().catch(() => {});
+    }
+  });
+
+  try {
+    const upstreamRes = await fetch(upstreamUrl, {
+      headers: {
+        accept: "text/event-stream"
+      },
+      signal: controller.signal
+    });
+
+    if (!upstreamRes.ok || !upstreamRes.body) {
+      return sendError(res, 502, `runtime stream unavailable (${upstreamRes.status})`);
+    }
+
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive"
+    });
+
+    reader = upstreamRes.body.getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done || res.writableEnded) {
+        break;
+      }
+      res.write(Buffer.from(value));
+    }
+  } catch (error) {
+    if (!res.headersSent) {
+      return sendError(res, 502, error instanceof Error ? error.message : String(error));
+    }
+    if (!res.writableEnded) {
+      writeSse(res, {
+        event: "error",
+        data: {
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+      res.end();
+    }
+  }
+}
+
 function buildViewState() {
   const state = getState();
   const orders = getRecentOrders({ limit: 50 });
@@ -317,6 +426,51 @@ async function serveStatic(res, pathname) {
 async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/healthz") {
     return sendJson(res, 200, { ok: true, service: "agentcafe-world" });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/stream") {
+    return proxyRuntimeSse(req, res, url);
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/healthz") {
+    return proxyRuntimeJson(req, res, url, "/healthz");
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/inbox") {
+    return proxyRuntimeJson(req, res, url, "/v1/inbox");
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/runtime/inbox/ack") {
+    return proxyRuntimeJson(req, res, url, "/v1/inbox/ack");
+  }
+
+  const runtimeInboxAckMatch = url.pathname.match(/^\/api\/runtime\/inbox\/([^/]+)\/ack$/);
+  if (req.method === "POST" && runtimeInboxAckMatch) {
+    return proxyRuntimeJson(req, res, url, `/v1/inbox/${encodeURIComponent(runtimeInboxAckMatch[1])}/ack`);
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/timeline") {
+    return proxyRuntimeJson(req, res, url, "/v1/timeline");
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/presence") {
+    return proxyRuntimeJson(req, res, url, "/v1/presence");
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/tasks") {
+    return proxyRuntimeJson(req, res, url, "/v1/tasks");
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/events") {
+    return proxyRuntimeJson(req, res, url, "/v1/events");
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/mentions") {
+    return proxyRuntimeJson(req, res, url, "/v1/mentions");
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/replay") {
+    return proxyRuntimeJson(req, res, url, "/v1/replay");
   }
 
   if (req.method === "GET" && url.pathname === "/api/stream") {

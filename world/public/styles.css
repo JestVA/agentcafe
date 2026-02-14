@@ -43,6 +43,12 @@ h2 {
   margin: 0 0 12px;
 }
 
+.runtime-subtitle {
+  margin-top: -8px;
+  color: #6a5949;
+  font-size: 14px;
+}
+
 canvas {
   width: 100%;
   border-radius: 12px;
@@ -56,7 +62,7 @@ canvas {
 
 .side-panel {
   display: grid;
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto auto auto auto;
   gap: 16px;
   align-content: start;
 }
@@ -83,6 +89,24 @@ li {
   padding-right: 4px;
 }
 
+#inboxList {
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+#presenceList {
+  max-height: 180px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+#taskList {
+  max-height: 220px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 #chatList {
   max-height: 240px;
   overflow: auto;
@@ -96,6 +120,18 @@ li {
 
   #ordersList {
     max-height: 260px;
+  }
+
+  #inboxList {
+    max-height: 180px;
+  }
+
+  #presenceList {
+    max-height: 160px;
+  }
+
+  #taskList {
+    max-height: 200px;
   }
 
   #chatList {

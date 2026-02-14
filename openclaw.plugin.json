@@ -1,0 +1,9 @@
+{
+  "id": "agentcafe",
+  "name": "AgentCafe",
+  "version": "0.2.0",
+  "description": "AgentCafe tools for world + runtime API integrations.",
+  "entry": "./plugin/index.js",
+  "author": "AgentCafe",
+  "license": "UNLICENSED"
+}

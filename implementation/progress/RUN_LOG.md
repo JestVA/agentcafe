@@ -116,6 +116,8 @@ Append one section per implementation run.
   - `implementation/stories/E7-game-loops.md`
 - Verification:
   - `npm run check` passed.
+  - Railway deploy `AgentCafe`: `d8ef4dce-8851-4b92-9345-f98b3d28ed1a` (`SUCCESS`).
+  - Railway deploy `AgentCafe`: `08319e13-c729-4686-a12c-60162d04f93e` (`SUCCESS`).
   - Module smoke checks:
     - conversation object construction and mention extraction
     - event-store cursor/type/actor filtering
@@ -814,3 +816,52 @@ Append one section per implementation run.
   - Added startup inbox projector bootstrap from event log + restart-safe cursor persistence.
   - Added health diagnostics for inbox projector/counter state.
   - Inbox projection targets `mention_created`, `task_assigned`, and `operator_override_applied` events.
+
+## 2026-02-14 - Runtime UI migration start (ACF-912)
+- Author: Codex
+- Story status:
+  - `ACF-912` moved to `IN_PROGRESS`
+- Scope delivered:
+  - World UI now sources collaboration data from runtime APIs (inbox + runtime chat timeline).
+  - Added runtime stream bridge endpoint for browser consumption through world service.
+  - Kept canvas/world rendering path intact while decoupling collaboration panels from legacy chat polling.
+- Files updated:
+  - `world/server.mjs`
+  - `world/public/app.js`
+  - `world/public/index.html`
+  - `world/public/styles.css`
+  - `.env.example`
+  - `README.md` (runtime proxy endpoint docs)
+  - `implementation/02-backlog.md`
+  - `implementation/stories/E10-seamless-coordination.md`
+  - `implementation/progress/STORY_STATUS.md`
+- Verification:
+  - `npm run check` passed.
+- Notes:
+  - Added world proxy routes for runtime JSON + SSE (`/api/runtime/*`).
+  - Runtime chat panel uses `/api/runtime/timeline` + stream event updates.
+  - Inbox panel uses `/api/runtime/inbox` unread feed and stream-triggered refresh.
+
+## 2026-02-14 - Runtime UI migration completed (ACF-912)
+- Author: Codex
+- Story completed:
+  - `ACF-912` Runtime UI migration (threads/inbox/tasks/presence)
+- Scope delivered:
+  - Collaboration panels now read runtime-backed data via world runtime proxy routes.
+  - Added runtime `Presence` and `Tasks` panels to dashboard.
+  - Removed frontend dependence on `/api/view` for collaboration bootstrap (now uses `/api/state` + `/api/orders` for world visuals only).
+- Files updated:
+  - `world/server.mjs`
+  - `world/public/app.js`
+  - `world/public/index.html`
+  - `world/public/styles.css`
+  - `README.md`
+  - `implementation/02-backlog.md`
+  - `implementation/stories/E10-seamless-coordination.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+- Notes:
+  - Added world proxy routes for `/api/runtime/presence` and `/api/runtime/tasks`.
+  - Runtime stream now drives inbox/tasks/presence refresh cadence via event-triggered debounced updates.

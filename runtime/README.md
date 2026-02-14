@@ -16,7 +16,7 @@ npm run runtime:realtime
 npm run runtime:projector
 ```
 
-To enable durable DB-backed stores, set `DATABASE_URL` (Postgres) and apply migrations in `runtime/db/migrations`.
+To enable durable DB-backed stores, set `DATABASE_URL` (Postgres). The API auto-applies migrations at startup by default (`API_DB_AUTO_MIGRATE=true`).
 
 ## Load + SLO gate
 Run against a live API/realtime endpoint:

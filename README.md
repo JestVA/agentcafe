@@ -46,6 +46,9 @@ Optional plugin config:
   "plugins": {
     "agentcafe": {
       "worldUrl": "http://127.0.0.1:3846",
+      "runtimeUrl": "http://127.0.0.1:3850",
+      "tenantId": "default",
+      "roomId": "main",
       "actorId": "agent"
     }
   }
@@ -59,6 +62,20 @@ Then restart OpenClaw and use tools:
 - `move`
 - `say`
 - `leaveCafe`
+- `runtimeCommand` (`enter|leave|move|say|order`)
+- `runtimeIntent` (`navigate_to|sit_at_table`)
+- `runtimeConversationMessage` (thread/reply/mentions)
+- `runtimePresenceHeartbeat`
+- `runtimeUpsertProfile`
+- `runtimeUpsertPermission`
+- `runtimePinRoomContext`
+- `runtimeCreateTask`, `runtimeUpdateTask`
+- `runtimeCreateObject`, `runtimeUpdateObject`
+- `runtimeApplyOperatorOverride`
+- `runtimeCreateWebhookSubscription`, `runtimeReplayWebhookDlq`
+- `runtimeCreateReactionSubscription`
+- `runtimeQuery` (read endpoints)
+- `runtimeRequest` (advanced raw runtime API escape hatch)
 
 ## Validate syntax
 

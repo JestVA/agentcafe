@@ -6,6 +6,7 @@ import { createEvent, EVENT_TYPES } from "../shared/events.mjs";
 import { json, readJson, sendRateLimitHeaders } from "../shared/http.mjs";
 import { optionalObject, optionalString, requireString } from "../shared/validate.mjs";
 import { createPostgresPool } from "../db/postgres.mjs";
+import { applyPostgresMigrations } from "../db/migrate.mjs";
 import { ProjectionState } from "../projector/projection-state.mjs";
 import { PgEventStore } from "./event-store-pg.mjs";
 import { InMemoryEventStore } from "./event-store.mjs";
@@ -58,8 +59,19 @@ const TASKS_FILE = process.env.TASKS_FILE || "./runtime/data/tasks.json";
 const OBJECTS_FILE = process.env.OBJECTS_FILE || "./runtime/data/objects.json";
 const PRESENCE_DEFAULT_TTL_MS = Math.max(1000, Number(process.env.PRESENCE_DEFAULT_TTL_MS || 60000));
 const PRESENCE_SWEEP_MS = Math.max(500, Number(process.env.PRESENCE_SWEEP_MS || 2000));
+const API_DB_AUTO_MIGRATE = String(process.env.API_DB_AUTO_MIGRATE ?? "true").toLowerCase() !== "false";
 
 const pgPool = await createPostgresPool();
+if (pgPool && API_DB_AUTO_MIGRATE) {
+  const migrationResult = await applyPostgresMigrations({ pool: pgPool });
+  if (migrationResult.applied.length > 0) {
+    process.stdout.write(
+      `agentcafe-api applied ${migrationResult.applied.length} migration(s): ${migrationResult.applied.join(", ")}\n`
+    );
+  } else {
+    process.stdout.write("agentcafe-api migrations already up to date\n");
+  }
+}
 const eventStore = pgPool
   ? new PgEventStore({ pool: pgPool })
   : new InMemoryEventStore({ filePath: EVENT_STORE_FILE });
@@ -610,6 +622,9 @@ function requireIdempotencyKey(req) {
 }
 
 function sendError(res, requestId, error, rateHeaders = {}) {
+  if (res.headersSent || res.writableEnded) {
+    return;
+  }
   const normalized = normalizeError(error);
   const correlationId = normalized.details?.correlationId;
   json(res, normalized.status, errorBody(normalized, requestId), {

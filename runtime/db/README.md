@@ -28,6 +28,11 @@ psql "$POSTGRES_URL" -f runtime/db/migrations/009_operator_audit.sql
 psql "$POSTGRES_URL" -f runtime/db/migrations/010_shared_objects.sql
 ```
 
+## Automatic startup migrations
+- `runtime/api/server.mjs` now auto-applies migrations on startup when `DATABASE_URL` is set.
+- Behavior is controlled by `API_DB_AUTO_MIGRATE` (default `true`).
+- Startup migration execution is serialized with a Postgres advisory lock (`API_DB_MIGRATION_LOCK_KEY`).
+
 ## Notes
 - `events.sequence` is the canonical ordering cursor for projector/replay.
 - `idempotency_keys` stores prior responses for replay-safe writes.

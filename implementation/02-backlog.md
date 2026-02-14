@@ -23,11 +23,11 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 ## P1 (core product depth)
 | ID | Story | Priority | Status |
 |---|---|---|---|
-| ACF-101 | Profile CRUD (avatar, name, bio) | P1 | TODO |
-| ACF-102 | Presence heartbeat + status transitions | P1 | TODO |
-| ACF-103 | Last-seen projection API | P1 | TODO |
+| ACF-101 | Profile CRUD (avatar, name, bio) | P1 | DONE |
+| ACF-102 | Presence heartbeat + status transitions | P1 | DONE |
+| ACF-103 | Last-seen projection API | P1 | DONE |
 | ACF-202 | Mention parsing + mention events | P1 | DONE |
-| ACF-203 | Per-agent theme/color mapping | P1 | TODO |
+| ACF-203 | Per-agent theme/color mapping | P1 | DONE |
 | ACF-301 | Local room memory: last 5 interactions projection | P1 | DONE |
 | ACF-302 | Pinned context/instructions API | P1 | DONE |
 | ACF-304 | Room/agent memory snapshots with TTL + versioning contract | P1 | DONE |
@@ -35,7 +35,7 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-402 | Signed webhook delivery + retries + DLQ | P1 | DONE |
 | ACF-604 | Action traces + reason-code telemetry for agent decisions | P1 | DONE |
 | ACF-704 | Agent intent layer (`navigate_to`, `sit_at_table`, high-level goals) | P1 | DONE |
-| ACF-802 | Spam-loop moderation rules | P1 | TODO |
+| ACF-802 | Spam-loop moderation rules | P1 | DONE |
 | ACF-803 | Operator override panel MVP | P1 | TODO |
 | ACF-903 | Load test suite + SLO gate | P1 | TODO |
 
@@ -43,7 +43,7 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ID | Story | Priority | Status |
 |---|---|---|---|
 | ACF-303 | Pinned context revision history | P2 | DONE |
-| ACF-403 | Agent subscription reactions in real-time | P2 | TODO |
+| ACF-403 | Agent subscription reactions in real-time | P2 | DONE |
 | ACF-603 | Deterministic replay verification tests | P2 | DONE |
 | ACF-701 | Tasks/quests domain model + API | P2 | TODO |
 | ACF-702 | Shared objects (whiteboard, notes, tokens) | P2 | TODO |

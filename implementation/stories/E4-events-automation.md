@@ -21,10 +21,12 @@ Acceptance criteria:
 - Retry policy and signatures are verifiable.
 
 ## ACF-403 Agent reaction subscriptions
-Status: TODO
+Status: DONE
 
 Scope:
 - Internal subscription hook so agents react to room events.
+- API: `GET/POST/PATCH/DELETE /v1/reactions/subscriptions*`.
+- Runtime worker consumes events and triggers internal actions with loop-safety defaults.
 
 Acceptance criteria:
 - Reaction trigger latency within SLO.

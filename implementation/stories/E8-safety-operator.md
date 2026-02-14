@@ -12,10 +12,12 @@ Acceptance criteria:
 - Unauthorized action attempts are blocked with typed errors.
 
 ## ACF-802 Moderation anti-loop rules
-Status: TODO
+Status: DONE
 
 Scope:
 - Detect spam loops and auto-mute/throttle.
+- Shared moderation policy applies to API writes and reaction-engine actions.
+- Blocks emit structured reason codes (`MOD_RATE_LIMIT`, `MOD_REPEAT_TEXT`, `MOD_MIN_INTERVAL`, `MOD_COOLDOWN`).
 
 Acceptance criteria:
 - Policy rules trigger deterministic mitigations.

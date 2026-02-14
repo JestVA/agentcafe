@@ -31,6 +31,9 @@ To enable durable DB-backed stores, set `DATABASE_URL` (Postgres) and apply migr
 - `GET /v1/timeline` (time/cursor filtered ordered events)
 - `GET /v1/replay` (reconstruct room window, default last 10 mins)
 - `GET /v1/memory/local` (last room interactions, max 5)
+- `GET /v1/presence` (query presence states)
+- `GET /v1/presence/last-seen` (event-derived last-seen projection by room/actor)
+- `POST /v1/presence/heartbeat` (heartbeat + status update)
 - `GET /v1/rooms/context/pin` (current pinned room context)
 - `GET /v1/rooms/context/history` (version history for pinned context)
 - `POST /v1/rooms/context/pin` (set pinned room context)
@@ -38,12 +41,25 @@ To enable durable DB-backed stores, set `DATABASE_URL` (Postgres) and apply migr
 - `POST /v1/snapshots/{room|agent}`
 - `GET /v1/snapshots/{room|agent}`
 - `GET /v1/traces/{correlationId}`
+- `GET /v1/profiles` (list profiles or query single via `actorId`)
+- `POST /v1/profiles` (upsert profile, optional `theme`)
+- `GET /v1/profiles/{actorId}`
+- `PATCH /v1/profiles/{actorId}`
+- `DELETE /v1/profiles/{actorId}`
 - `GET /v1/permissions` (effective permission or filtered list)
 - `POST /v1/permissions` (upsert per-agent room permissions)
+- `GET /v1/reactions/subscriptions` (list internal reaction subscriptions)
+- `POST /v1/reactions/subscriptions`
+- `GET /v1/reactions/subscriptions/{id}`
+- `PATCH /v1/reactions/subscriptions/{id}`
+- `DELETE /v1/reactions/subscriptions/{id}`
 - `GET/POST/PATCH/DELETE /v1/subscriptions*`
 - `GET /v1/subscriptions/dlq`
 - `GET /v1/subscriptions/deliveries`
 - `POST /v1/subscriptions/dlq/{id}/replay`
+
+Moderation:
+- Mutating agent actions may return `ERR_MODERATION_BLOCKED` with reason codes for anti-loop control.
 
 ## Current scope
 Implemented:
@@ -59,6 +75,7 @@ Implemented:
 - ACF-404 market-events SSE stream with cursor resume
 - ACF-401 subscription registry + CRUD API (DB-backed when `DATABASE_URL` is set, file fallback otherwise)
 - ACF-402 signed webhook dispatcher with retry + DLQ (DB-backed when `DATABASE_URL` is set)
+- ACF-403 internal reaction subscriptions + event-driven trigger engine
 - ACF-501 idempotency middleware (in-memory store)
 - ACF-502 structured error envelope
 - ACF-503 rate-limit headers
@@ -66,7 +83,12 @@ Implemented:
 - ACF-602 replay endpoint (DB-backed event timeline when `DATABASE_URL` is set)
 - ACF-604 action traces with reason codes
 - ACF-704 intent execution (`navigate_to`, `sit_at_table`)
+- ACF-101 profile CRUD (avatar URL, display name, bio)
+- ACF-102 presence heartbeat + status transitions
+- ACF-103 event-derived last-seen projection API
+- ACF-203 per-agent theme/color mapping in profile + replay conversation context
 - ACF-801 permission matrix enforcement (`move`, `speak`, `order`, `enter_leave`, `moderate`)
+- ACF-802 moderation anti-loop rules (`ERR_MODERATION_BLOCKED` with reason codes)
 
 Not yet implemented:
 - advanced auth/permission enforcement

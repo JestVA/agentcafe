@@ -327,3 +327,134 @@ Append one section per implementation run.
 - Notes:
   - Enforcement now blocks unauthorized command/intent/context-pin writes with `ERR_FORBIDDEN` (HTTP 403).
   - Added permissions management API: `GET /v1/permissions`, `POST /v1/permissions`.
+
+## 2026-02-14 - ACF-403 internal reaction subscriptions
+- Author: Codex
+- Story completed:
+  - `ACF-403` Agent reaction subscriptions
+- Files added:
+  - `runtime/api/reaction-store.mjs`
+  - `runtime/api/reaction-store-pg.mjs`
+  - `runtime/api/reaction-engine.mjs`
+  - `runtime/db/migrations/005_reactions.sql`
+  - `runtime/tests/reaction-engine.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/db/README.md`
+  - `runtime/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E4-events-automation.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 6 passed, 0 failed.
+- Notes:
+  - Added reaction subscription CRUD API (`/v1/reactions/subscriptions*`) and an in-process reaction engine.
+  - Reaction execution respects permission matrix and defaults to loop-safe behavior (`ignoreSelf`, `ignoreReactionEvents`, `cooldownMs`).
+
+## 2026-02-14 - ACF-802 moderation anti-loop rules
+- Author: Codex
+- Story completed:
+  - `ACF-802` Moderation anti-loop/spam throttles
+- Files added:
+  - `runtime/api/moderation-policy.mjs`
+  - `runtime/tests/moderation-policy.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/api/reaction-engine.mjs`
+  - `runtime/api/trace-store.mjs`
+  - `runtime/shared/errors.mjs`
+  - `runtime/tests/reaction-engine.test.mjs`
+  - `runtime/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E8-safety-operator.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 10 passed, 0 failed.
+- Notes:
+  - API and reaction-engine actions now share moderation policy and return `ERR_MODERATION_BLOCKED` with typed `reasonCode`.
+  - Added moderation reason codes: `MOD_RATE_LIMIT`, `MOD_REPEAT_TEXT`, `MOD_MIN_INTERVAL`, `MOD_COOLDOWN`.
+
+## 2026-02-14 - ACF-101 profile CRUD
+- Author: Codex
+- Story completed:
+  - `ACF-101` Profile CRUD (avatar/name/bio)
+- Files added:
+  - `runtime/api/profile-store.mjs`
+  - `runtime/api/profile-store-pg.mjs`
+  - `runtime/tests/profile-store.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E1-identity-presence.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 11 passed, 0 failed.
+- Notes:
+  - Added profile API endpoints: `GET/POST /v1/profiles` and `GET/PATCH/DELETE /v1/profiles/{actorId}`.
+  - API auto-selects Postgres `agents` table in DB mode; file fallback uses `PROFILES_FILE`.
+
+## 2026-02-14 - ACF-102 presence + ACF-103 last-seen projection
+- Author: Codex
+- Stories completed:
+  - `ACF-102` Presence heartbeat + status transitions
+  - `ACF-103` Last-seen projection API
+- Files added:
+  - `runtime/api/presence-store.mjs`
+  - `runtime/api/presence-store-pg.mjs`
+  - `runtime/db/migrations/006_presence.sql`
+  - `runtime/tests/presence-store.test.mjs`
+  - `runtime/api/last-seen-projection.mjs`
+  - `runtime/tests/last-seen-projection.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/projector/projection-state.mjs`
+  - `runtime/shared/events.mjs`
+  - `runtime/README.md`
+  - `runtime/db/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/stories/E1-identity-presence.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 14 passed, 0 failed.
+- Notes:
+  - Added presence endpoints: `GET /v1/presence`, `POST /v1/presence/heartbeat`.
+  - Added event-derived last-seen endpoint: `GET /v1/presence/last-seen`.
+  - Heartbeat expiry now transitions stale actors to `inactive` with emitted `status_changed` events.
+
+## 2026-02-14 - ACF-203 per-agent theme mapping
+- Author: Codex
+- Story completed:
+  - `ACF-203` Per-agent theme/color mapping
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/api/profile-store.mjs`
+  - `runtime/api/profile-store-pg.mjs`
+  - `runtime/tests/profile-store.test.mjs`
+  - `runtime/README.md`
+  - `implementation/stories/E2-conversation.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 14 passed, 0 failed.
+- Notes:
+  - Profile contract now accepts optional `theme` (`bubbleColor`, `textColor`, `accentColor`).
+  - `GET /v1/replay` now enriches snapshot actors/messages/chat with per-actor theme context.

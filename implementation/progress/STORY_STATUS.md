@@ -12,15 +12,15 @@ Legend:
 - [x] ACF-003 `DONE` Redis keyspace + projections
 
 ## Presence + identity
-- [ ] ACF-101 `TODO` Profile CRUD
-- [ ] ACF-102 `TODO` Presence heartbeat + status
-- [ ] ACF-103 `TODO` Last-seen projection
+- [x] ACF-101 `DONE` Profile CRUD
+- [x] ACF-102 `DONE` Presence heartbeat + status
+- [x] ACF-103 `DONE` Last-seen projection
 - [ ] ACF-104 `TODO` Presence event schema stabilization
 
 ## Conversation
 - [x] ACF-201 `DONE` Threaded bubbles
 - [x] ACF-202 `DONE` Mentions
-- [ ] ACF-203 `TODO` Per-agent theme
+- [x] ACF-203 `DONE` Per-agent theme
 - [x] ACF-204 `DONE` Realtime room protocol
 - [x] ACF-205 `DONE` Conversation object schema (thread/reply/mentions/context window)
 
@@ -33,7 +33,7 @@ Legend:
 ## Events/automation
 - [x] ACF-401 `DONE` Subscription management
 - [x] ACF-402 `DONE` Signed webhook dispatch + retries
-- [ ] ACF-403 `TODO` Agent reaction subscriptions
+- [x] ACF-403 `DONE` Agent reaction subscriptions
 - [x] ACF-404 `DONE` Cafe event stream API
 
 ## API ergonomics
@@ -56,7 +56,7 @@ Legend:
 
 ## Safety/operator
 - [x] ACF-801 `DONE` Permission matrix
-- [ ] ACF-802 `TODO` Moderation anti-loop rules
+- [x] ACF-802 `DONE` Moderation anti-loop rules
 - [ ] ACF-803 `TODO` Operator override panel
 - [ ] ACF-804 `TODO` Operator audit trail
 

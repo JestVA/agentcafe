@@ -53,6 +53,14 @@ export class ProjectionState {
         direction: event.payload.direction,
         steps: event.payload.steps
       };
+    } else if (event.type === "presence_heartbeat") {
+      actor.status = event.payload?.status || actor.status;
+      actor.presence = {
+        lastHeartbeatAt: event.payload?.lastHeartbeatAt || event.timestamp,
+        ttlMs: Number(event.payload?.ttlMs || 0),
+        expiresAt: event.payload?.expiresAt || null,
+        isActive: true
+      };
     } else if (event.type === "bubble_posted" || event.type === "conversation_message_posted") {
       actor.status = "thinking";
       const conversation = event.payload?.conversation || null;
@@ -120,6 +128,12 @@ export class ProjectionState {
         actor.x = Number(event.payload.finalPosition.x) || actor.x;
         actor.y = Number(event.payload.finalPosition.y) || actor.y;
       }
+    } else if (event.type === "status_changed") {
+      actor.status = event.payload?.to || actor.status;
+      actor.presence = {
+        ...(actor.presence || {}),
+        isActive: event.payload?.to !== "inactive"
+      };
     } else if (event.type === "room_context_pinned") {
       room.pinnedContext = {
         version: Number(event.payload?.version || 0),
@@ -149,7 +163,9 @@ export class ProjectionState {
       "agent_entered",
       "agent_left",
       "intent_completed",
-      "room_context_pinned"
+      "room_context_pinned",
+      "presence_heartbeat",
+      "status_changed"
     ]);
     if (!allowed.has(event.type)) {
       return;
@@ -183,6 +199,12 @@ export class ProjectionState {
     } else if (event.type === "room_context_pinned") {
       summary.content = String(event.payload?.content || "");
       summary.version = Number(event.payload?.version || 0);
+    } else if (event.type === "presence_heartbeat") {
+      summary.status = event.payload?.status || null;
+    } else if (event.type === "status_changed") {
+      summary.from = event.payload?.from || null;
+      summary.to = event.payload?.to || null;
+      summary.reason = event.payload?.reason || null;
     }
 
     room.localMemory.unshift(summary);

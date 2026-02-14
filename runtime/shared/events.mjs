@@ -8,6 +8,8 @@ export const EVENT_TYPES = {
   ORDER: "order_changed",
   MENTION_CREATED: "mention_created",
   ROOM_CONTEXT_PINNED: "room_context_pinned",
+  PRESENCE_HEARTBEAT: "presence_heartbeat",
+  STATUS_CHANGED: "status_changed",
   CONVERSATION_MESSAGE: "conversation_message_posted",
   INTENT_PLANNED: "intent_planned",
   INTENT_COMPLETED: "intent_completed",

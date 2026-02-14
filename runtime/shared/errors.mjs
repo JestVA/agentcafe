@@ -14,6 +14,7 @@ export const ERROR_CODES = {
   },
   ERR_RATE_LIMITED: { status: 429, message: "Rate limit exceeded" },
   ERR_FORBIDDEN: { status: 403, message: "Forbidden" },
+  ERR_MODERATION_BLOCKED: { status: 429, message: "Moderation policy blocked action" },
   ERR_UNSUPPORTED_ACTION: { status: 404, message: "Unsupported action" },
   ERR_INTERNAL: { status: 500, message: "Internal error" }
 };

@@ -21,10 +21,11 @@ Acceptance criteria:
 - Mentions are captured and visible in timeline.
 
 ## ACF-203 Per-agent themes
-Status: TODO
+Status: DONE
 
 Scope:
-- Store theme/color per agent.
+- Store theme/color per agent in profile contract.
+- Include actor theme context in replay conversation snapshots.
 
 Acceptance criteria:
 - Bubble style uses saved theme consistently.

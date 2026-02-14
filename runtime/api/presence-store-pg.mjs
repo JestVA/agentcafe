@@ -43,7 +43,7 @@ export class PgPresenceStore {
       INSERT INTO presence_states (
         tenant_id, room_id, actor_id, status, last_heartbeat_at, ttl_ms, expires_at, is_active, created_at, updated_at
       ) VALUES (
-        $1, $2, $3, $4, $5::timestamptz, $6, ($5::timestamptz + ($6 * interval '1 millisecond')), true, now(), now()
+        $1, $2, $3, $4, $5::timestamptz, $6::integer, ($5::timestamptz + ($6::bigint * interval '1 millisecond')), true, now(), now()
       )
       ON CONFLICT (tenant_id, room_id, actor_id)
       DO UPDATE SET

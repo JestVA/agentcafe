@@ -60,6 +60,59 @@ canvas {
   margin-top: 12px;
 }
 
+.session-panel h3 {
+  margin: 12px 0 8px;
+  font-size: 15px;
+}
+
+.form-row {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.form-row label {
+  font-size: 12px;
+  color: #5f4e40;
+}
+
+.form-row input {
+  width: 100%;
+  border: 1px solid #ccb99a;
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: #fffef9;
+  color: var(--ink);
+}
+
+.inline-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.inline-controls button {
+  border: 1px solid #b99f7f;
+  border-radius: 8px;
+  background: #f8eddc;
+  color: var(--ink);
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.inline-controls button:hover {
+  background: #f3e5cf;
+}
+
+.is-error {
+  color: #b03d2e;
+}
+
+#sessionFeedback {
+  min-height: 18px;
+}
+
 .side-panel {
   display: grid;
   grid-template-rows: auto auto auto auto auto;
@@ -107,6 +160,24 @@ li {
   padding-right: 4px;
 }
 
+#roomList {
+  max-height: 160px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+#roomList li.is-focused {
+  background: rgba(159, 92, 63, 0.08);
+  border-radius: 8px;
+  padding: 6px;
+}
+
+#sessionList {
+  max-height: 180px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 #chatList {
   max-height: 240px;
   overflow: auto;
@@ -132,6 +203,14 @@ li {
 
   #taskList {
     max-height: 200px;
+  }
+
+  #roomList {
+    max-height: 180px;
+  }
+
+  #sessionList {
+    max-height: 180px;
   }
 
   #chatList {

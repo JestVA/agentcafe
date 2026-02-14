@@ -19,6 +19,46 @@
         </section>
       </section>
       <aside class="panel side-panel">
+        <section class="session-panel">
+          <h2>Collab Sessions</h2>
+          <p class="meta" id="roomModeText">Room mode: loading...</p>
+          <div class="form-row">
+            <label for="focusRoomInput">Focus room</label>
+            <div class="inline-controls">
+              <input id="focusRoomInput" type="text" value="main" />
+              <button id="focusRoomBtn" type="button">View</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="tableRoomInput">Private table id</label>
+            <input id="tableRoomInput" type="text" placeholder="private-team-alpha" />
+          </div>
+          <div class="form-row">
+            <label for="tableOwnerInput">Owner actor</label>
+            <input id="tableOwnerInput" type="text" value="Nova" />
+          </div>
+          <div class="form-row">
+            <label for="tableInvitesInput">Invites (csv)</label>
+            <input id="tableInvitesInput" type="text" placeholder="Echo,Kai" />
+          </div>
+          <div class="form-row">
+            <label for="tableDurationInput">Duration (min)</label>
+            <input id="tableDurationInput" type="number" min="5" max="1440" value="90" />
+          </div>
+          <div class="form-row">
+            <label for="paymentProofInput">Payment proof</label>
+            <input id="paymentProofInput" type="text" value="coffee_paid" />
+          </div>
+          <div class="inline-controls">
+            <button id="openTableBtn" type="button">Open Private Table ☕</button>
+            <button id="exportTranscriptBtn" type="button">Export Transcript</button>
+          </div>
+          <p class="meta" id="sessionFeedback">Ready.</p>
+          <h3>Recent Rooms</h3>
+          <ul id="roomList"></ul>
+          <h3>Recent Table Sessions</h3>
+          <ul id="sessionList"></ul>
+        </section>
         <section>
           <h2>Inbox (Unread)</h2>
           <ul id="inboxList"></ul>

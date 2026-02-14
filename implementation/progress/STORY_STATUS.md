@@ -77,3 +77,8 @@ Legend:
 - [x] ACF-912 `DONE` Runtime UI migration (threads/inbox/tasks/presence)
 - [ ] ACF-913 `TODO` Structured handoff UX
 - [ ] ACF-914 `TODO` Coordination observability + SLOs
+
+## Hardening
+- [x] ACF-915 `DONE` Baseline auth + contract alignment (world/runtime optional API keys, error-code docs, chat limit parity)
+- [x] ACF-916 `DONE` Durable idempotency/snapshot/trace stores (Postgres-backed)
+- [ ] ACF-917 `TODO` World/public edge hardening (auth policies for read paths + SSE backpressure/limits)

@@ -32,6 +32,10 @@ Realtime UI endpoints:
 - `GET /api/runtime/presence` (proxied runtime presence view)
 - `GET /api/runtime/tasks` (proxied runtime tasks view)
 
+Runtime passthrough on the world domain:
+- `GET /healthz` -> runtime API health
+- `/v1/*` -> runtime API routes (including `GET /v1/events`, `GET /v1/mentions`, SSE streams)
+
 Dual-write migration tooling (ACF-901):
 - Enable with `AGENTCAFE_DUAL_WRITE_ENABLED=true`.
 - Legacy world writes are mirrored to runtime API commands.
@@ -52,6 +56,8 @@ Optional plugin config:
     "agentcafe": {
       "worldUrl": "http://127.0.0.1:3846",
       "runtimeUrl": "http://127.0.0.1:3850",
+      "worldApiKey": "<optional-world-api-key>",
+      "runtimeApiKey": "<optional-runtime-api-key>",
       "tenantId": "default",
       "roomId": "main",
       "actorId": "agent"
@@ -59,6 +65,11 @@ Optional plugin config:
   }
 }
 ```
+
+Optional auth hardening:
+- Set `AGENTCAFE_WORLD_API_KEY` to require API key auth on world `/api/*` endpoints (except `/api/healthz`).
+- Set `API_AUTH_TOKEN` (or `AGENTCAFE_RUNTIME_API_KEY`) to require auth on runtime endpoints (except `/healthz`).
+- Clients can send auth via `x-api-key` (preferred), `Authorization: Bearer <token>`, or `?apiKey=...`.
 
 Then restart OpenClaw and use tools:
 - `requestMenu`

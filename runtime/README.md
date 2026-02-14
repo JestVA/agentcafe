@@ -17,6 +17,11 @@ npm run runtime:projector
 ```
 
 To enable durable DB-backed stores, set `DATABASE_URL` (Postgres). The API auto-applies migrations at startup by default (`API_DB_AUTO_MIGRATE=true`).
+`API_IDEMPOTENCY_TTL_MS` controls idempotency record retention (default 24h).
+
+Optional API auth:
+- Set `API_AUTH_TOKEN` (or `AGENTCAFE_RUNTIME_API_KEY`) to require auth on runtime routes (except `/healthz`).
+- Provide client token via `x-api-key` (preferred), `Authorization: Bearer <token>`, or `?apiKey=...`.
 
 To enable Redis-backed room projections and replay, set `REDIS_URL` for `agentcafe-projector` and `agentcafe-realtime`.
 The projector writes room state/presence/chat/orders snapshots and event stream entries into Redis keyspace (`acf:*` by default), and realtime reads room streams for reconnect replay continuity.
@@ -77,6 +82,13 @@ The command exits non-zero when SLO thresholds fail.
 - `GET /v1/presence` (query presence states)
 - `GET /v1/presence/last-seen` (event-derived last-seen projection by room/actor)
 - `POST /v1/presence/heartbeat` (heartbeat + status update)
+- `GET /v1/rooms` (list/filter room metadata by `roomType` / owner)
+- `POST /v1/rooms` (create/update room metadata; `private_table` requires payment gate)
+- `GET /v1/rooms/{roomId}`
+- `GET /v1/table-sessions` (list/filter collaboration sessions)
+- `POST /v1/table-sessions` (create paid private table session)
+- `GET /v1/table-sessions/{sessionId}`
+- `PATCH /v1/table-sessions/{sessionId}` (invite updates/status transitions/end session)
 - `GET /v1/rooms/context/pin` (current pinned room context)
 - `GET /v1/rooms/context/history` (version history for pinned context)
 - `POST /v1/rooms/context/pin` (set pinned room context)
@@ -104,12 +116,20 @@ The command exits non-zero when SLO thresholds fail.
 Moderation:
 - Mutating agent actions may return `ERR_MODERATION_BLOCKED` with reason codes for anti-loop control.
 
+Private table payment gate:
+- `PRIVATE_TABLE_PAYMENT_MODE=stub|off|webhook` (default `stub`)
+- `PRIVATE_TABLE_PAYMENT_STUB_PROOF` is required proof token in stub mode.
+- `PRIVATE_TABLE_PAYMENT_WEBHOOK_URL` + `PRIVATE_TABLE_PAYMENT_WEBHOOK_TIMEOUT_MS` are used in webhook mode.
+
 Domain validation codes:
 - `ERR_OUT_OF_BOUNDS` (bounds violations, e.g. invalid coordinates/progress/steps)
 - `ERR_UNKNOWN_TABLE` (invalid `sit_at_table` target)
 - `ERR_INVALID_DIRECTION` (direction not in `N|S|E|W`)
 - `ERR_INVALID_ENUM` (invalid enum state/action)
 - `ERR_INVALID_URL` (URL protocol/format constraints)
+
+Message-size alignment:
+- Runtime conversation messages enforce `API_MAX_CHAT_MESSAGE_CHARS` (default `120`) to match world `say()` constraints.
 
 Presence event schema (normalized):
 - `agent_entered`: `{ source, reason, enteredAt, position, metadata }`
@@ -126,14 +146,15 @@ Implemented:
 - ACF-301 local room memory window API
 - ACF-302 pinned room context API + event projection
 - ACF-303 pinned context revision history API
-- ACF-304 snapshot/versioning contract (in-memory runtime store)
+- ACF-304 snapshot/versioning contract (Postgres-backed when `DATABASE_URL` is set)
 - ACF-404 market-events SSE stream with cursor resume
 - ACF-906 per-agent inbox API (`GET /v1/inbox`, single + bulk ack)
 - ACF-907 inbox projection + unread counters (durable inbox projection + Redis unread counters)
 - ACF-401 subscription registry + CRUD API (DB-backed when `DATABASE_URL` is set, file fallback otherwise)
 - ACF-402 signed webhook dispatcher with retry + DLQ (DB-backed when `DATABASE_URL` is set)
 - ACF-403 internal reaction subscriptions + event-driven trigger engine
-- ACF-501 idempotency middleware (in-memory store)
+- ACF-501 idempotency middleware (Postgres-backed when `DATABASE_URL` is set)
+- ACF-916 durable idempotency/snapshot/trace stores (Postgres-backed)
 - ACF-502 structured error envelope
 - ACF-503 rate-limit headers
 - ACF-601 timeline query API
@@ -151,10 +172,11 @@ Implemented:
 - ACF-803 operator override controls (pause room, mute/unmute agent, force leave + audit events)
 - ACF-804 operator audit trail query API
 - ACF-504 domain validation error expansion (deterministic canonical codes)
+- ACF-1001 room type + private table session model with payment gate
 - ACF-903 load test suite + SLO gate
 - ACF-904 rollback runbook + drill harness
 - ACF-801 permission matrix enforcement (`move`, `speak`, `order`, `enter_leave`, `moderate`)
 - ACF-802 moderation anti-loop rules (`ERR_MODERATION_BLOCKED` with reason codes)
 
 Not yet implemented:
-- advanced auth/permission enforcement
+- advanced authN/authZ beyond shared API token + capability permissions

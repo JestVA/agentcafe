@@ -11,6 +11,7 @@ import { ProjectionState } from "../projector/projection-state.mjs";
 import { PgEventStore } from "./event-store-pg.mjs";
 import { InMemoryEventStore } from "./event-store.mjs";
 import { hashRequest, InMemoryIdempotencyStore } from "./idempotency-store.mjs";
+import { PgIdempotencyStore } from "./idempotency-store-pg.mjs";
 import { IntentPlanner } from "./intent-planner.mjs";
 import { projectLastSeen } from "./last-seen-projection.mjs";
 import { ModerationPolicy } from "./moderation-policy.mjs";
@@ -30,6 +31,10 @@ import { PgPinnedContextStore } from "./pinned-context-store-pg.mjs";
 import { FilePinnedContextStore } from "./pinned-context-store.mjs";
 import { PgSharedObjectStore } from "./shared-object-store-pg.mjs";
 import { FileSharedObjectStore } from "./shared-object-store.mjs";
+import { PgRoomStore } from "./room-store-pg.mjs";
+import { FileRoomStore } from "./room-store.mjs";
+import { PgTableSessionStore } from "./table-session-store-pg.mjs";
+import { FileTableSessionStore } from "./table-session-store.mjs";
 import { ReactionEngine } from "./reaction-engine.mjs";
 import { PgReactionStore } from "./reaction-store-pg.mjs";
 import { FileReactionStore } from "./reaction-store.mjs";
@@ -37,9 +42,11 @@ import { PgTaskStore } from "./task-store-pg.mjs";
 import { FileTaskStore } from "./task-store.mjs";
 import { FixedWindowRateLimiter } from "./rate-limit.mjs";
 import { InMemorySnapshotStore } from "./snapshot-store.mjs";
+import { PgSnapshotStore } from "./snapshot-store-pg.mjs";
 import { PgSubscriptionStore } from "./subscription-store-pg.mjs";
 import { FileSubscriptionStore } from "./subscription-store.mjs";
 import { InMemoryTraceStore, REASON_CODES } from "./trace-store.mjs";
+import { PgTraceStore } from "./trace-store-pg.mjs";
 import { WebhookDispatcher } from "./webhook-dispatcher.mjs";
 import { createInboxCounterStore } from "./inbox-counter-store.mjs";
 import { PgInboxStore } from "./inbox-store-pg.mjs";
@@ -60,10 +67,33 @@ const PROFILES_FILE = process.env.PROFILES_FILE || "./runtime/data/profiles.json
 const REACTIONS_FILE = process.env.REACTIONS_FILE || "./runtime/data/reactions.json";
 const TASKS_FILE = process.env.TASKS_FILE || "./runtime/data/tasks.json";
 const OBJECTS_FILE = process.env.OBJECTS_FILE || "./runtime/data/objects.json";
+const ROOMS_FILE = process.env.ROOMS_FILE || "./runtime/data/rooms.json";
+const TABLE_SESSIONS_FILE = process.env.TABLE_SESSIONS_FILE || "./runtime/data/table-sessions.json";
 const INBOX_FILE = process.env.INBOX_FILE || "./runtime/data/inbox.json";
 const PRESENCE_DEFAULT_TTL_MS = Math.max(1000, Number(process.env.PRESENCE_DEFAULT_TTL_MS || 60000));
 const PRESENCE_SWEEP_MS = Math.max(500, Number(process.env.PRESENCE_SWEEP_MS || 2000));
 const API_DB_AUTO_MIGRATE = String(process.env.API_DB_AUTO_MIGRATE ?? "true").toLowerCase() !== "false";
+const API_MAX_CHAT_MESSAGE_CHARS = Math.max(
+  1,
+  Number(process.env.API_MAX_CHAT_MESSAGE_CHARS || process.env.AGENTCAFE_MAX_CHAT_MESSAGE_CHARS || 120)
+);
+const API_AUTH_TOKEN = String(process.env.API_AUTH_TOKEN || process.env.AGENTCAFE_RUNTIME_API_KEY || "").trim();
+const API_AUTH_QUERY_PARAM = String(process.env.API_AUTH_QUERY_PARAM || "apiKey").trim() || "apiKey";
+const API_IDEMPOTENCY_TTL_MS = Math.max(60 * 1000, Number(process.env.API_IDEMPOTENCY_TTL_MS || 24 * 60 * 60 * 1000));
+const PRIVATE_TABLE_PRICE_USD = Math.max(0, Number(process.env.PRIVATE_TABLE_PRICE_USD || 3.5));
+const PRIVATE_TABLE_PAYMENT_MODE = String(process.env.PRIVATE_TABLE_PAYMENT_MODE || "stub").trim().toLowerCase();
+const PRIVATE_TABLE_PAYMENT_STUB_PROOF = String(
+  process.env.PRIVATE_TABLE_PAYMENT_STUB_PROOF || "coffee_paid"
+).trim();
+const PRIVATE_TABLE_PAYMENT_WEBHOOK_URL = String(process.env.PRIVATE_TABLE_PAYMENT_WEBHOOK_URL || "").trim();
+const PRIVATE_TABLE_PAYMENT_WEBHOOK_TIMEOUT_MS = Math.max(
+  250,
+  Number(process.env.PRIVATE_TABLE_PAYMENT_WEBHOOK_TIMEOUT_MS || 4000)
+);
+const PRIVATE_TABLE_DEFAULT_SESSION_MINUTES = Math.max(
+  5,
+  Number(process.env.PRIVATE_TABLE_DEFAULT_SESSION_MINUTES || 90)
+);
 
 const pgPool = await createPostgresPool();
 if (pgPool && API_DB_AUTO_MIGRATE) {
@@ -79,12 +109,18 @@ if (pgPool && API_DB_AUTO_MIGRATE) {
 const eventStore = pgPool
   ? new PgEventStore({ pool: pgPool })
   : new InMemoryEventStore({ filePath: EVENT_STORE_FILE });
-const idempotency = new InMemoryIdempotencyStore();
+const idempotency = pgPool
+  ? new PgIdempotencyStore({ pool: pgPool, ttlMs: API_IDEMPOTENCY_TTL_MS })
+  : new InMemoryIdempotencyStore({ ttlMs: API_IDEMPOTENCY_TTL_MS });
 const rateLimiter = new FixedWindowRateLimiter();
 const moderationPolicy = new ModerationPolicy();
-const snapshots = new InMemorySnapshotStore();
+const snapshots = pgPool
+  ? new PgSnapshotStore({ pool: pgPool })
+  : new InMemorySnapshotStore();
 const planner = new IntentPlanner();
-const traces = new InMemoryTraceStore();
+const traces = pgPool
+  ? new PgTraceStore({ pool: pgPool })
+  : new InMemoryTraceStore();
 const inboxCounterStore = await createInboxCounterStore();
 const subscriptionStore = pgPool
   ? new PgSubscriptionStore({ pool: pgPool })
@@ -113,6 +149,12 @@ const taskStore = pgPool
 const sharedObjectStore = pgPool
   ? new PgSharedObjectStore({ pool: pgPool })
   : new FileSharedObjectStore({ filePath: OBJECTS_FILE });
+const roomStore = pgPool
+  ? new PgRoomStore({ pool: pgPool })
+  : new FileRoomStore({ filePath: ROOMS_FILE });
+const tableSessionStore = pgPool
+  ? new PgTableSessionStore({ pool: pgPool })
+  : new FileTableSessionStore({ filePath: TABLE_SESSIONS_FILE });
 const pinnedContextStore = pgPool
   ? new PgPinnedContextStore({ pool: pgPool })
   : new FilePinnedContextStore({ filePath: ROOM_CONTEXT_FILE });
@@ -120,6 +162,7 @@ const inboxStore = pgPool
   ? new PgInboxStore({ pool: pgPool, counterStore: inboxCounterStore })
   : new FileInboxStore({ filePath: INBOX_FILE, counterStore: inboxCounterStore });
 await eventStore.init?.();
+await idempotency.init?.();
 await subscriptionStore.init();
 await permissionStore.init();
 await operatorOverrideStore.init();
@@ -129,8 +172,12 @@ await profileStore.init();
 await reactionStore.init();
 await taskStore.init();
 await sharedObjectStore.init();
+await roomStore.init();
+await tableSessionStore.init();
 await pinnedContextStore.init();
 await inboxStore.init();
+await snapshots.init?.();
+await traces.init?.();
 const webhookDispatcher = new WebhookDispatcher({
   eventStore,
   subscriptionStore,
@@ -292,6 +339,8 @@ const CAPABILITY_KEYS = new Set(["canMove", "canSpeak", "canOrder", "canEnterLea
 const PRESENCE_STATUS_VALUES = new Set(["thinking", "idle", "busy", "inactive"]);
 const TASK_STATE_VALUES = new Set(["open", "active", "done"]);
 const OBJECT_TYPE_VALUES = new Set(["whiteboard", "note", "token"]);
+const ROOM_TYPE_VALUES = new Set(["lobby", "private_table"]);
+const TABLE_SESSION_STATUS_VALUES = new Set(["active", "ended"]);
 const MOVE_DIRECTIONS = new Set(["N", "S", "E", "W"]);
 const THEME_FIELDS = ["bubbleColor", "textColor", "accentColor"];
 const THEME_COLOR_RE = /^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -618,6 +667,187 @@ function validateSharedObjectInput(input, { partial = false } = {}) {
   return out;
 }
 
+function parseRoomType(value, { field = "roomType", fallback = "lobby" } = {}) {
+  const roomType = String(value == null ? fallback : value).trim().toLowerCase();
+  if (!ROOM_TYPE_VALUES.has(roomType)) {
+    throw new AppError("ERR_INVALID_ENUM", `${field} must be one of lobby|private_table`, {
+      field,
+      allowed: [...ROOM_TYPE_VALUES]
+    });
+  }
+  return roomType;
+}
+
+function parseTableSessionStatus(value, { field = "status", fallback = "active" } = {}) {
+  const status = String(value == null ? fallback : value).trim().toLowerCase();
+  if (!TABLE_SESSION_STATUS_VALUES.has(status)) {
+    throw new AppError("ERR_INVALID_ENUM", `${field} must be one of active|ended`, {
+      field,
+      allowed: [...TABLE_SESSION_STATUS_VALUES]
+    });
+  }
+  return status;
+}
+
+function parseActorIdList(value, { field = "actorIds" } = {}) {
+  if (value == null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new AppError("ERR_VALIDATION", `${field} must be an array of actor ids`, { field });
+  }
+  const out = [];
+  const seen = new Set();
+  for (const item of value) {
+    const actorId = String(item || "").trim();
+    if (!actorId || seen.has(actorId)) {
+      continue;
+    }
+    seen.add(actorId);
+    out.push(actorId);
+  }
+  return out;
+}
+
+function parseUsdAmount(value, { field = "amountUsd", fallback = PRIVATE_TABLE_PRICE_USD } = {}) {
+  const parsed = value == null || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be a non-negative number`, {
+      field,
+      min: 0,
+      value
+    });
+  }
+  return Math.round(parsed * 100) / 100;
+}
+
+function parseDurationMinutes(value, { field = "durationMinutes", fallback = PRIVATE_TABLE_DEFAULT_SESSION_MINUTES } = {}) {
+  const parsed = value == null || value === "" ? Number(fallback) : Number(value);
+  if (!Number.isFinite(parsed)) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be between 5 and 1440`, {
+      field,
+      min: 5,
+      max: 1440,
+      value
+    });
+  }
+  const rounded = Math.round(parsed);
+  if (rounded < 5 || rounded > 1440) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `${field} must be between 5 and 1440`, {
+      field,
+      min: 5,
+      max: 1440,
+      value: rounded
+    });
+  }
+  return rounded;
+}
+
+async function verifyPrivateTablePayment({
+  tenantId,
+  roomId,
+  ownerActorId,
+  paymentProof,
+  paymentRef,
+  amountUsd = PRIVATE_TABLE_PRICE_USD,
+  requestId
+}) {
+  const mode = PRIVATE_TABLE_PAYMENT_MODE || "stub";
+  const normalizedAmountUsd = parseUsdAmount(amountUsd, { field: "paymentAmountUsd" });
+  if (mode === "off") {
+    return {
+      verified: true,
+      paymentProvider: "off",
+      paymentRef: paymentRef || null,
+      amountUsd: normalizedAmountUsd
+    };
+  }
+
+  if (mode === "stub") {
+    const proof = String(paymentProof || "").trim();
+    if (!proof || proof !== PRIVATE_TABLE_PAYMENT_STUB_PROOF) {
+      throw new AppError("ERR_PAYMENT_REQUIRED", "Payment required to create a private table", {
+        tenantId,
+        roomId,
+        ownerActorId,
+        expectedProofHint: "Provide paymentProof accepted by current payment gate mode",
+        mode,
+        amountUsd: normalizedAmountUsd
+      }, 402);
+    }
+    return {
+      verified: true,
+      paymentProvider: "stub",
+      paymentRef: paymentRef || proof,
+      amountUsd: normalizedAmountUsd
+    };
+  }
+
+  if (mode === "webhook") {
+    if (!PRIVATE_TABLE_PAYMENT_WEBHOOK_URL) {
+      throw new AppError("ERR_PAYMENT_REQUIRED", "Payment verification is not configured", {
+        mode,
+        reason: "PRIVATE_TABLE_PAYMENT_WEBHOOK_URL is missing"
+      }, 402);
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, PRIVATE_TABLE_PAYMENT_WEBHOOK_TIMEOUT_MS);
+    try {
+      const response = await fetch(PRIVATE_TABLE_PAYMENT_WEBHOOK_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": requestId
+        },
+        body: JSON.stringify({
+          tenantId,
+          roomId,
+          ownerActorId,
+          paymentProof: paymentProof || null,
+          paymentRef: paymentRef || null,
+          amountUsd: normalizedAmountUsd
+        }),
+        signal: controller.signal
+      });
+
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = null;
+      }
+      const paid = Boolean(payload?.paid ?? payload?.ok);
+      if (!response.ok || !paid) {
+        throw new AppError("ERR_PAYMENT_REQUIRED", "Payment verification failed", {
+          mode,
+          status: response.status,
+          providerMessage: payload?.message || null
+        }, 402);
+      }
+      return {
+        verified: true,
+        paymentProvider: String(payload?.provider || "webhook"),
+        paymentRef: String(payload?.paymentRef || paymentRef || "").trim() || null,
+        amountUsd: normalizedAmountUsd
+      };
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError("ERR_PAYMENT_REQUIRED", "Payment verification failed", {
+        mode,
+        cause: error instanceof Error ? error.message : String(error)
+      }, 402);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new AppError("ERR_PAYMENT_REQUIRED", "Unknown payment gate mode", { mode }, 402);
+}
+
 function parseTypes(value) {
   if (!value) {
     return [];
@@ -645,6 +875,20 @@ function parseBool(value, fallback = undefined) {
 function parseIsoQuery(value, { field }) {
   if (value == null || value === "") {
     return null;
+  }
+  const parsed = Date.parse(String(value));
+  if (!Number.isFinite(parsed)) {
+    throw new AppError("ERR_VALIDATION", `${field} must be a valid ISO-8601 timestamp`, {
+      field,
+      value
+    });
+  }
+  return new Date(parsed).toISOString();
+}
+
+function parseIsoInput(value, { field, fallback = null } = {}) {
+  if (value == null || value === "") {
+    return fallback;
   }
   const parsed = Date.parse(String(value));
   if (!Number.isFinite(parsed)) {
@@ -689,6 +933,8 @@ function mutatingRoute(pathname, method) {
     pathname === "/v1/operator/overrides" ||
     pathname === "/v1/tasks" ||
     pathname === "/v1/objects" ||
+    pathname === "/v1/rooms" ||
+    pathname === "/v1/table-sessions" ||
     pathname === "/v1/profiles" ||
     pathname === "/v1/reactions/subscriptions" ||
     pathname === "/v1/subscriptions" ||
@@ -701,6 +947,8 @@ function mutatingRoute(pathname, method) {
     pathname.startsWith("/v1/reactions/subscriptions/") ||
     pathname.startsWith("/v1/tasks/") ||
     pathname.startsWith("/v1/objects/") ||
+    pathname.startsWith("/v1/rooms/") ||
+    pathname.startsWith("/v1/table-sessions/") ||
     pathname.startsWith("/v1/profiles/") ||
     pathname.startsWith("/v1/inbox/")
   ) {
@@ -715,6 +963,41 @@ function requireIdempotencyKey(req) {
     throw new AppError("ERR_IDEMPOTENCY_KEY_REQUIRED");
   }
   return key.trim();
+}
+
+function readProvidedAuthToken(req, url) {
+  const headerKey = typeof req.headers["x-api-key"] === "string" ? req.headers["x-api-key"].trim() : "";
+  if (headerKey) {
+    return headerKey;
+  }
+  const authHeader = typeof req.headers.authorization === "string" ? req.headers.authorization.trim() : "";
+  if (/^bearer\s+/i.test(authHeader)) {
+    return authHeader.replace(/^bearer\s+/i, "").trim();
+  }
+  return String(url.searchParams.get(API_AUTH_QUERY_PARAM) || "").trim();
+}
+
+function requireRuntimeAuth(req, res, url, requestId, rateHeaders) {
+  if (!API_AUTH_TOKEN) {
+    return true;
+  }
+  if (req.method === "GET" && url.pathname === "/healthz") {
+    return true;
+  }
+  if (readProvidedAuthToken(req, url) === API_AUTH_TOKEN) {
+    return true;
+  }
+  const unauthorized = new AppError("ERR_FORBIDDEN", "Unauthorized", {
+    auth: {
+      header: "x-api-key",
+      query: API_AUTH_QUERY_PARAM
+    }
+  }, 401);
+  json(res, 401, errorBody(unauthorized, requestId), {
+    "x-request-id": requestId,
+    ...rateHeaders
+  });
+  return false;
 }
 
 function sendError(res, requestId, error, rateHeaders = {}) {
@@ -741,7 +1024,7 @@ function buildPayload(type, body) {
 
   if (type === EVENT_TYPES.CONVERSATION_MESSAGE) {
     requireString(body, "text");
-    const conversation = buildConversationObject(body);
+    const conversation = buildConversationObject(body, { maxTextLength: API_MAX_CHAT_MESSAGE_CHARS });
     return {
       conversation,
       bubble: {
@@ -781,10 +1064,10 @@ function createTraceContext({ requestId, route, method, body, tenantId, roomId, 
   return trace;
 }
 
-function idempotencyGuard({ req, tenantId, scope, body, traceCorrelationId }) {
+async function idempotencyGuard({ req, tenantId, scope, body, traceCorrelationId }) {
   const idempotencyKey = requireIdempotencyKey(req);
   const requestHash = hashRequest({ path: scope, method: req.method, body });
-  const check = idempotency.check({ tenantId, scope, idempotencyKey, requestHash });
+  const check = await idempotency.check({ tenantId, scope, idempotencyKey, requestHash });
 
   if (check.status === "conflict") {
     throw new AppError("ERR_IDEMPOTENCY_KEY_CONFLICT", undefined, {
@@ -912,6 +1195,202 @@ function enforceModeration({
   );
 }
 
+async function emitPresenceHeartbeat({
+  tenantId,
+  roomId,
+  actorId,
+  status = "busy",
+  ttlMs = PRESENCE_DEFAULT_TTL_MS,
+  reason = "activity",
+  source = "system",
+  correlationId = null,
+  causationId = null
+}) {
+  const heartbeat = await presenceStore.heartbeat({
+    tenantId,
+    roomId,
+    actorId,
+    status,
+    ttlMs
+  });
+
+  const emitted = [];
+  const heartbeatEvent = await eventStore.append(
+    createEvent({
+      tenantId,
+      roomId,
+      actorId,
+      type: EVENT_TYPES.PRESENCE_HEARTBEAT,
+      payload: {
+        status,
+        ttlMs,
+        lastHeartbeatAt: heartbeat.state.lastHeartbeatAt,
+        expiresAt: heartbeat.state.expiresAt
+      },
+      correlationId,
+      causationId
+    })
+  );
+  emitted.push(heartbeatEvent);
+
+  if (heartbeat.statusChanged) {
+    const statusEvent = await eventStore.append(
+      createEvent({
+        tenantId,
+        roomId,
+        actorId,
+        type: EVENT_TYPES.STATUS_CHANGED,
+        payload: {
+          from: heartbeat.previousStatus,
+          to: heartbeat.state.status,
+          reason,
+          source,
+          lastHeartbeatAt: heartbeat.state.lastHeartbeatAt
+        },
+        correlationId,
+        causationId: heartbeatEvent.eventId
+      })
+    );
+    emitted.push(statusEvent);
+  }
+
+  return {
+    presence: heartbeat.state,
+    emitted
+  };
+}
+
+async function emitPresenceInactive({
+  tenantId,
+  roomId,
+  actorId,
+  reason = "agent_left",
+  source = "system",
+  correlationId = null,
+  causationId = null
+}) {
+  const inactivated = await presenceStore.setInactive({ tenantId, roomId, actorId });
+  if (!inactivated) {
+    return {
+      presence: null,
+      emitted: []
+    };
+  }
+  if (!inactivated.statusChanged) {
+    return {
+      presence: inactivated.state,
+      emitted: []
+    };
+  }
+
+  const statusEvent = await eventStore.append(
+    createEvent({
+      tenantId,
+      roomId,
+      actorId,
+      type: EVENT_TYPES.STATUS_CHANGED,
+      payload: {
+        from: inactivated.previousStatus,
+        to: "inactive",
+        reason,
+        source,
+        changedAt: new Date().toISOString(),
+        lastHeartbeatAt: inactivated.state.lastHeartbeatAt,
+        expiresAt: inactivated.state.expiresAt
+      },
+      correlationId,
+      causationId
+    })
+  );
+
+  return {
+    presence: inactivated.state,
+    emitted: [statusEvent]
+  };
+}
+
+async function applyPresenceFromCommand({
+  tenantId,
+  roomId,
+  actorId,
+  commandType,
+  correlationId,
+  causationId,
+  traceCorrelationId = null
+}) {
+  try {
+    if (commandType === EVENT_TYPES.LEAVE) {
+      return await emitPresenceInactive({
+        tenantId,
+        roomId,
+        actorId,
+        reason: "agent_left",
+        source: "agent",
+        correlationId,
+        causationId
+      });
+    }
+
+    const status = commandType === EVENT_TYPES.ENTER ? "idle" : "busy";
+    return await emitPresenceHeartbeat({
+      tenantId,
+      roomId,
+      actorId,
+      status,
+      ttlMs: PRESENCE_DEFAULT_TTL_MS,
+      reason: "command_activity",
+      source: "agent",
+      correlationId,
+      causationId
+    });
+  } catch (error) {
+    if (traceCorrelationId) {
+      traces.step(traceCorrelationId, REASON_CODES.RC_INTERNAL_ERROR, {
+        phase: "presence_auto_command",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+    return {
+      presence: null,
+      emitted: []
+    };
+  }
+}
+
+async function applyPresenceFromIntent({
+  tenantId,
+  roomId,
+  actorId,
+  correlationId,
+  causationId,
+  traceCorrelationId = null
+}) {
+  try {
+    return await emitPresenceHeartbeat({
+      tenantId,
+      roomId,
+      actorId,
+      status: "busy",
+      ttlMs: PRESENCE_DEFAULT_TTL_MS,
+      reason: "intent_activity",
+      source: "agent",
+      correlationId,
+      causationId
+    });
+  } catch (error) {
+    if (traceCorrelationId) {
+      traces.step(traceCorrelationId, REASON_CODES.RC_INTERNAL_ERROR, {
+        phase: "presence_auto_intent",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+    return {
+      presence: null,
+      emitted: []
+    };
+  }
+}
+
 async function handleCommand(req, res, url, requestId, rateHeaders) {
   const route = COMMAND_ROUTES.get(url.pathname);
   if (!route) {
@@ -934,7 +1413,7 @@ async function handleCommand(req, res, url, requestId, rateHeaders) {
 
   try {
     const scope = `${roomId}:${actorId}:${url.pathname}`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -1024,6 +1503,17 @@ async function handleCommand(req, res, url, requestId, rateHeaders) {
       }
     }
 
+    const presenceSideEffect = await applyPresenceFromCommand({
+      tenantId,
+      roomId,
+      actorId,
+      commandType: route.type,
+      correlationId: trace.correlationId,
+      causationId: persisted.eventId,
+      traceCorrelationId: trace.correlationId
+    });
+    generatedEvents.push(...presenceSideEffect.emitted);
+
     const response = {
       ok: true,
       data: {
@@ -1038,13 +1528,14 @@ async function handleCommand(req, res, url, requestId, rateHeaders) {
           sequence: item.sequence,
           eventType: item.type
         })),
+        presence: presenceSideEffect.presence,
         actorId,
         roomId,
         tenantId
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 202,
@@ -1093,7 +1584,7 @@ async function handleIntent(req, res, url, requestId, rateHeaders) {
 
   try {
     const scope = `${roomId}:${actorId}:${url.pathname}:${intent}`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -1229,6 +1720,16 @@ async function handleIntent(req, res, url, requestId, rateHeaders) {
       emittedEvents: generated.length
     });
 
+    const presenceSideEffect = await applyPresenceFromIntent({
+      tenantId,
+      roomId,
+      actorId,
+      correlationId: trace.correlationId,
+      causationId: completedEvent.eventId,
+      traceCorrelationId: trace.correlationId
+    });
+    generated.push(...presenceSideEffect.emitted);
+
     const response = {
       ok: true,
       data: {
@@ -1241,11 +1742,12 @@ async function handleIntent(req, res, url, requestId, rateHeaders) {
         correlationId: trace.correlationId,
         eventIds: generated.map((item) => item.eventId),
         finalEventId: completedEvent.eventId,
-        finalSequence: completedEvent.sequence
+        finalSequence: completedEvent.sequence,
+        presence: presenceSideEffect.presence
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 202,
@@ -1295,7 +1797,7 @@ async function handleSnapshotCreate(req, res, url, requestId, rateHeaders, scope
 
   try {
     const scope = `${roomId}:${scopeKind}:${actorId || "-"}:${url.pathname}`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -1315,8 +1817,8 @@ async function handleSnapshotCreate(req, res, url, requestId, rateHeaders, scope
 
     const snapshot =
       scopeKind === "room"
-        ? snapshots.createRoomSnapshot({ tenantId, roomId, state, ttlSeconds })
-        : snapshots.createAgentSnapshot({ tenantId, roomId, actorId, state, ttlSeconds });
+        ? await snapshots.createRoomSnapshot({ tenantId, roomId, state, ttlSeconds })
+        : await snapshots.createAgentSnapshot({ tenantId, roomId, actorId, state, ttlSeconds });
 
     await eventStore.append(
       createEvent({
@@ -1350,7 +1852,7 @@ async function handleSnapshotCreate(req, res, url, requestId, rateHeaders, scope
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 201,
@@ -1391,8 +1893,8 @@ async function handleSnapshotRead(req, res, url, requestId, rateHeaders, scopeKi
 
   const snapshot =
     scopeKind === "room"
-      ? snapshots.findRoom({ tenantId, roomId, version })
-      : snapshots.findAgent({ tenantId, roomId, actorId, version });
+      ? await snapshots.findRoom({ tenantId, roomId, version })
+      : await snapshots.findAgent({ tenantId, roomId, actorId, version });
 
   if (!snapshot) {
     throw new AppError("ERR_NOT_FOUND", "Snapshot not found", {
@@ -1583,7 +2085,7 @@ async function handleInbox(req, res, url, requestId, rateHeaders) {
 
     try {
       const scope = `${tenantId}:${actorId}:inbox:${inboxId}:ack`;
-      const idempotent = idempotencyGuard({
+      const idempotent = await idempotencyGuard({
         req,
         tenantId,
         scope,
@@ -1629,7 +2131,7 @@ async function handleInbox(req, res, url, requestId, rateHeaders) {
         }
       };
 
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 200,
@@ -1693,7 +2195,7 @@ async function handleInbox(req, res, url, requestId, rateHeaders) {
 
     try {
       const scope = `${tenantId}:${actorId}:inbox:ack:${roomId || "all"}`;
-      const idempotent = idempotencyGuard({
+      const idempotent = await idempotencyGuard({
         req,
         tenantId,
         scope,
@@ -1733,7 +2235,7 @@ async function handleInbox(req, res, url, requestId, rateHeaders) {
         }
       };
 
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 200,
@@ -2195,7 +2697,7 @@ async function handlePresenceHeartbeat(req, res, url, requestId, rateHeaders) {
 
   try {
     const scope = `${tenantId}:${roomId}:${actorId}:presence:heartbeat`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -2213,57 +2715,22 @@ async function handlePresenceHeartbeat(req, res, url, requestId, rateHeaders) {
       });
     }
 
-    const heartbeat = await presenceStore.heartbeat({
+    const heartbeat = await emitPresenceHeartbeat({
       tenantId,
       roomId,
       actorId,
       status,
-      ttlMs
+      ttlMs,
+      reason: "heartbeat_update",
+      source: "agent",
+      correlationId: trace.correlationId
     });
-
-    const emitted = [];
-    const heartbeatEvent = await eventStore.append(
-      createEvent({
-        tenantId,
-        roomId,
-        actorId,
-        type: EVENT_TYPES.PRESENCE_HEARTBEAT,
-        payload: {
-          status,
-          ttlMs,
-          lastHeartbeatAt: heartbeat.state.lastHeartbeatAt,
-          expiresAt: heartbeat.state.expiresAt
-        },
-        correlationId: trace.correlationId
-      })
-    );
-    emitted.push(heartbeatEvent);
-
-    if (heartbeat.statusChanged) {
-      const statusEvent = await eventStore.append(
-        createEvent({
-          tenantId,
-          roomId,
-          actorId,
-          type: EVENT_TYPES.STATUS_CHANGED,
-          payload: {
-            from: heartbeat.previousStatus,
-            to: heartbeat.state.status,
-            reason: "heartbeat_update",
-            lastHeartbeatAt: heartbeat.state.lastHeartbeatAt
-          },
-          correlationId: trace.correlationId,
-          causationId: heartbeatEvent.eventId
-        })
-      );
-      emitted.push(statusEvent);
-    }
 
     const response = {
       ok: true,
       data: {
-        presence: heartbeat.state,
-        emittedEvents: emitted.map((item) => ({
+        presence: heartbeat.presence,
+        emittedEvents: heartbeat.emitted.map((item) => ({
           eventId: item.eventId,
           sequence: item.sequence,
           eventType: item.type
@@ -2272,7 +2739,7 @@ async function handlePresenceHeartbeat(req, res, url, requestId, rateHeaders) {
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 202,
@@ -2369,7 +2836,7 @@ async function handleRoomPinnedContextWrite(req, res, url, requestId, rateHeader
 
   try {
     const scope = `${tenantId}:${roomId}:room-context:pin`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -2439,7 +2906,7 @@ async function handleRoomPinnedContextWrite(req, res, url, requestId, rateHeader
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 201,
@@ -2544,10 +3011,10 @@ async function handleMarketStream(req, res, url, requestId) {
   });
 }
 
-function handleTraceLookup(req, res, url, requestId, rateHeaders) {
+async function handleTraceLookup(req, res, url, requestId, rateHeaders) {
   const prefix = "/v1/traces/";
   const correlationId = decodeURIComponent(url.pathname.slice(prefix.length));
-  const trace = traces.get(correlationId);
+  const trace = await traces.get(correlationId);
   if (!trace) {
     throw new AppError("ERR_NOT_FOUND", "Trace not found", { correlationId }, 404);
   }
@@ -2681,7 +3148,7 @@ async function handleOperatorOverrides(req, res, url, requestId, rateHeaders) {
 
     try {
       const scope = `${tenantId}:${roomId}:operator-overrides:${validated.action}:${validated.targetActorId || "-"}`;
-      const idempotent = idempotencyGuard({
+      const idempotent = await idempotencyGuard({
         req,
         tenantId,
         scope,
@@ -2812,7 +3279,7 @@ async function handleOperatorOverrides(req, res, url, requestId, rateHeaders) {
         }
       };
 
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 202,
@@ -2934,7 +3401,7 @@ async function handlePermissions(req, res, url, requestId, rateHeaders) {
     });
 
     const scope = `${tenantId}:permissions:${roomId}:${actorId}`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -2967,7 +3434,7 @@ async function handlePermissions(req, res, url, requestId, rateHeaders) {
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 200,
@@ -2983,6 +3450,657 @@ async function handlePermissions(req, res, url, requestId, rateHeaders) {
   }
 
   throw new AppError("ERR_UNSUPPORTED_ACTION", "Permissions route not found", {
+    method: req.method,
+    path: url.pathname
+  }, 404);
+}
+
+async function handleRooms(req, res, url, requestId, rateHeaders) {
+  if (req.method === "GET" && url.pathname === "/v1/rooms") {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const roomId = url.searchParams.get("roomId") || undefined;
+    if (roomId) {
+      const room = await roomStore.get({ tenantId, roomId });
+      if (!room) {
+        throw new AppError("ERR_NOT_FOUND", "Room not found", { tenantId, roomId }, 404);
+      }
+      return json(
+        res,
+        200,
+        {
+          ok: true,
+          data: {
+            room
+          }
+        },
+        {
+          "x-request-id": requestId,
+          ...rateHeaders
+        }
+      );
+    }
+
+    const roomType = url.searchParams.get("roomType")
+      ? parseRoomType(url.searchParams.get("roomType"), { field: "roomType" })
+      : undefined;
+    const ownerActorId = url.searchParams.get("ownerActorId") || undefined;
+    const limit = Number(url.searchParams.get("limit") || 200);
+    const rooms = await roomStore.list({
+      tenantId,
+      roomType,
+      ownerActorId,
+      limit
+    });
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          rooms,
+          count: rooms.length
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  const match = url.pathname.match(/^\/v1\/rooms\/([^/]+)$/);
+  if (req.method === "GET" && match) {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const roomId = decodeURIComponent(match[1]);
+    const room = await roomStore.get({ tenantId, roomId });
+    if (!room) {
+      throw new AppError("ERR_NOT_FOUND", "Room not found", { tenantId, roomId }, 404);
+    }
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          room
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/rooms") {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", "default");
+    const roomId = requireString(body, "roomId");
+    const actorId = requireString(body, "actorId");
+    const roomType = parseRoomType(body.roomType, { field: "roomType", fallback: "lobby" });
+    const ownerActorId = optionalString(body, "ownerActorId", actorId);
+    const displayName = optionalString(body, "displayName", null);
+    const metadata = optionalObject(body, "metadata", {});
+    const paymentProof = optionalString(body, "paymentProof", null);
+    const paymentRef = optionalString(body, "paymentRef", null);
+    const paymentAmountUsd = parseUsdAmount(body.paymentAmountUsd, {
+      field: "paymentAmountUsd",
+      fallback: PRIVATE_TABLE_PRICE_USD
+    });
+
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:rooms:${roomId}:upsert`;
+      const idempotent = await idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceOperatorOverrides({
+        tenantId,
+        roomId,
+        actorId,
+        action: "room_upsert",
+        traceCorrelationId: trace.correlationId
+      });
+
+      const existing = await roomStore.get({ tenantId, roomId });
+      let payment = null;
+      if (roomType === "private_table") {
+        payment = await verifyPrivateTablePayment({
+          tenantId,
+          roomId,
+          ownerActorId,
+          paymentProof,
+          paymentRef,
+          amountUsd: paymentAmountUsd,
+          requestId
+        });
+      }
+
+      const room = await roomStore.upsert({
+        tenantId,
+        roomId,
+        roomType,
+        displayName,
+        ownerActorId,
+        metadata
+      });
+      const created = !existing;
+      const roomEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId,
+          actorId,
+          type: created ? EVENT_TYPES.ROOM_CREATED : EVENT_TYPES.ROOM_UPDATED,
+          payload: {
+            roomId: room.roomId,
+            roomType: room.roomType,
+            displayName: room.displayName,
+            ownerActorId: room.ownerActorId,
+            metadata: room.metadata,
+            paymentProvider: payment?.paymentProvider || null,
+            paymentRef: payment?.paymentRef || null,
+            paymentAmountUsd: payment?.amountUsd ?? null
+          },
+          correlationId: trace.correlationId
+        })
+      );
+
+      const response = {
+        ok: true,
+        data: {
+          room,
+          created,
+          payment: payment
+            ? {
+                verified: true,
+                provider: payment.paymentProvider,
+                ref: payment.paymentRef,
+                amountUsd: payment.amountUsd
+              }
+            : null,
+          emittedEvents: [
+            {
+              eventId: roomEvent.eventId,
+              sequence: roomEvent.sequence,
+              eventType: roomEvent.type
+            }
+          ],
+          correlationId: trace.correlationId
+        }
+      };
+
+      const statusCode = created ? 201 : 200;
+      await idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, statusCode, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "rooms"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError("ERR_UNSUPPORTED_ACTION", "Rooms route not found", {
+    method: req.method,
+    path: url.pathname
+  }, 404);
+}
+
+function sanitizeTableSessionPatch(input) {
+  const allowed = ["invitedActorIds", "status", "startedAt", "expiresAt", "endedAt", "metadata"];
+  const out = {};
+  for (const key of allowed) {
+    if (key in input) {
+      out[key] = input[key];
+    }
+  }
+  return out;
+}
+
+async function handleTableSessions(req, res, url, requestId, rateHeaders) {
+  if (req.method === "GET" && url.pathname === "/v1/table-sessions") {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const roomId = url.searchParams.get("roomId") || undefined;
+    const ownerActorId = url.searchParams.get("ownerActorId") || undefined;
+    const status = url.searchParams.get("status")
+      ? parseTableSessionStatus(url.searchParams.get("status"), { field: "status" })
+      : undefined;
+    const limit = Number(url.searchParams.get("limit") || 200);
+    const sessions = await tableSessionStore.list({
+      tenantId,
+      roomId,
+      ownerActorId,
+      status,
+      limit
+    });
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          sessions,
+          count: sessions.length
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  const match = url.pathname.match(/^\/v1\/table-sessions\/([^/]+)$/);
+  if (req.method === "GET" && match) {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const sessionId = decodeURIComponent(match[1]);
+    const session = await tableSessionStore.get({ tenantId, sessionId });
+    if (!session) {
+      throw new AppError("ERR_NOT_FOUND", "Table session not found", {
+        tenantId,
+        sessionId
+      }, 404);
+    }
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          session
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  if (req.method === "POST" && url.pathname === "/v1/table-sessions") {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", "default");
+    const actorId = requireString(body, "actorId");
+    const ownerActorId = optionalString(body, "ownerActorId", actorId);
+    const roomId = optionalString(body, "roomId", `private-${randomUUID().slice(0, 8)}`);
+    const displayName = optionalString(body, "displayName", null);
+    const invitedActorIds = parseActorIdList(body.invitedActorIds, { field: "invitedActorIds" });
+    const metadata = optionalObject(body, "metadata", {});
+    const paymentProof = optionalString(body, "paymentProof", null);
+    const paymentRef = optionalString(body, "paymentRef", null);
+    const paymentAmountUsd = parseUsdAmount(body.paymentAmountUsd, {
+      field: "paymentAmountUsd",
+      fallback: PRIVATE_TABLE_PRICE_USD
+    });
+    const startedAt = parseIsoInput(body.startedAt, {
+      field: "startedAt",
+      fallback: new Date().toISOString()
+    });
+    const durationMinutes = parseDurationMinutes(body.durationMinutes, {
+      field: "durationMinutes",
+      fallback: PRIVATE_TABLE_DEFAULT_SESSION_MINUTES
+    });
+    const expiresAt = parseIsoInput(body.expiresAt, {
+      field: "expiresAt",
+      fallback: new Date(Date.parse(startedAt) + durationMinutes * 60 * 1000).toISOString()
+    });
+
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:table-sessions:create:${roomId}:${ownerActorId}`;
+      const idempotent = await idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceOperatorOverrides({
+        tenantId,
+        roomId,
+        actorId,
+        action: "table_session_create",
+        traceCorrelationId: trace.correlationId
+      });
+
+      const room = await roomStore.get({ tenantId, roomId });
+      if (room && room.roomType !== "private_table") {
+        throw new AppError(
+          "ERR_VALIDATION",
+          "table sessions must target a private_table room",
+          {
+            tenantId,
+            roomId,
+            roomType: room.roomType
+          }
+        );
+      }
+
+      const payment = await verifyPrivateTablePayment({
+        tenantId,
+        roomId,
+        ownerActorId,
+        paymentProof,
+        paymentRef,
+        amountUsd: paymentAmountUsd,
+        requestId
+      });
+
+      const ensuredRoom = await roomStore.upsert({
+        tenantId,
+        roomId,
+        roomType: "private_table",
+        displayName: displayName || room?.displayName || null,
+        ownerActorId: ownerActorId || room?.ownerActorId || null,
+        metadata: room?.metadata || {}
+      });
+
+      const session = await tableSessionStore.create({
+        tenantId,
+        roomId: ensuredRoom.roomId,
+        ownerActorId,
+        invitedActorIds,
+        status: "active",
+        startedAt,
+        expiresAt,
+        paymentRef: payment.paymentRef,
+        paymentAmountUsd: payment.amountUsd,
+        paymentProvider: payment.paymentProvider,
+        metadata
+      });
+
+      const createdEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId,
+          actorId,
+          type: EVENT_TYPES.TABLE_SESSION_CREATED,
+          payload: {
+            sessionId: session.sessionId,
+            roomId: session.roomId,
+            ownerActorId: session.ownerActorId,
+            invitedActorIds: session.invitedActorIds,
+            status: session.status,
+            startedAt: session.startedAt,
+            expiresAt: session.expiresAt,
+            paymentProvider: session.paymentProvider,
+            paymentRef: session.paymentRef,
+            paymentAmountUsd: session.paymentAmountUsd,
+            metadata: session.metadata
+          },
+          correlationId: trace.correlationId
+        })
+      );
+
+      const response = {
+        ok: true,
+        data: {
+          room: ensuredRoom,
+          session,
+          emittedEvents: [
+            {
+              eventId: createdEvent.eventId,
+              sequence: createdEvent.sequence,
+              eventType: createdEvent.type
+            }
+          ],
+          correlationId: trace.correlationId
+        }
+      };
+      await idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 201,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 201, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "table_sessions"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  if (req.method === "PATCH" && match) {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", url.searchParams.get("tenantId") || "default");
+    const sessionId = decodeURIComponent(match[1]);
+    const actorId = requireString(body, "actorId");
+    const existing = await tableSessionStore.get({ tenantId, sessionId });
+    if (!existing) {
+      throw new AppError("ERR_NOT_FOUND", "Table session not found", { tenantId, sessionId }, 404);
+    }
+
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId: existing.roomId,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:table-sessions:${sessionId}:patch`;
+      const idempotent = await idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceOperatorOverrides({
+        tenantId,
+        roomId: existing.roomId,
+        actorId,
+        action: "table_session_update",
+        traceCorrelationId: trace.correlationId
+      });
+
+      const sanitized = sanitizeTableSessionPatch(body);
+      const patch = {};
+      if ("invitedActorIds" in sanitized) {
+        patch.invitedActorIds = parseActorIdList(sanitized.invitedActorIds, {
+          field: "invitedActorIds"
+        });
+      }
+      if ("status" in sanitized) {
+        patch.status = parseTableSessionStatus(sanitized.status, { field: "status" });
+      }
+      if ("startedAt" in sanitized) {
+        patch.startedAt = parseIsoInput(sanitized.startedAt, {
+          field: "startedAt",
+          fallback: existing.startedAt
+        });
+      }
+      if ("expiresAt" in sanitized) {
+        patch.expiresAt = parseIsoInput(sanitized.expiresAt, {
+          field: "expiresAt",
+          fallback: existing.expiresAt
+        });
+      }
+      if ("endedAt" in sanitized) {
+        patch.endedAt = parseIsoInput(sanitized.endedAt, {
+          field: "endedAt",
+          fallback: existing.endedAt
+        });
+      }
+      if ("metadata" in sanitized) {
+        patch.metadata = optionalObject(sanitized, "metadata", {});
+      }
+      if (Object.keys(patch).length === 0) {
+        throw new AppError("ERR_VALIDATION", "At least one patch field is required", {
+          fields: ["invitedActorIds", "status", "startedAt", "expiresAt", "endedAt", "metadata"]
+        });
+      }
+
+      const session = await tableSessionStore.patch({ tenantId, sessionId, patch });
+      const emitted = [];
+      const updatedEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId: session.roomId,
+          actorId,
+          type: EVENT_TYPES.TABLE_SESSION_UPDATED,
+          payload: {
+            sessionId: session.sessionId,
+            status: session.status,
+            invitedActorIds: session.invitedActorIds,
+            startedAt: session.startedAt,
+            expiresAt: session.expiresAt,
+            endedAt: session.endedAt,
+            metadata: session.metadata,
+            changedFields: Object.keys(patch)
+          },
+          correlationId: trace.correlationId
+        })
+      );
+      emitted.push(updatedEvent);
+      if (session.status === "ended" && existing.status !== "ended") {
+        const endedEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: session.roomId,
+            actorId,
+            type: EVENT_TYPES.TABLE_SESSION_ENDED,
+            payload: {
+              sessionId: session.sessionId,
+              endedAt: session.endedAt,
+              ownerActorId: session.ownerActorId
+            },
+            correlationId: trace.correlationId,
+            causationId: updatedEvent.eventId
+          })
+        );
+        emitted.push(endedEvent);
+      }
+
+      const response = {
+        ok: true,
+        data: {
+          session,
+          emittedEvents: emitted.map((item) => ({
+            eventId: item.eventId,
+            sequence: item.sequence,
+            eventType: item.type
+          })),
+          correlationId: trace.correlationId
+        }
+      };
+      await idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 200,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 200, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "table_sessions"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError("ERR_UNSUPPORTED_ACTION", "Table sessions route not found", {
     method: req.method,
     path: url.pathname
   }, 404);
@@ -3139,7 +4257,7 @@ async function handleProfiles(req, res, url, requestId, rateHeaders) {
     });
 
     const scope = `${tenantId}:profiles:${actorId}:upsert`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -3170,7 +4288,7 @@ async function handleProfiles(req, res, url, requestId, rateHeaders) {
         correlationId: trace.correlationId
       }
     };
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 201,
@@ -3207,7 +4325,7 @@ async function handleProfiles(req, res, url, requestId, rateHeaders) {
     });
 
     const scope = `${tenantId}:profiles:${actorId}:${req.method}`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -3234,7 +4352,7 @@ async function handleProfiles(req, res, url, requestId, rateHeaders) {
           correlationId: trace.correlationId
         }
       };
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 200,
@@ -3262,7 +4380,7 @@ async function handleProfiles(req, res, url, requestId, rateHeaders) {
         correlationId: trace.correlationId
       }
     };
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 200,
@@ -3364,7 +4482,7 @@ async function handleSharedObjects(req, res, url, requestId, rateHeaders) {
 
     try {
       const scope = `${tenantId}:${roomId}:objects:create:${actorId}`;
-      const idempotent = idempotencyGuard({
+      const idempotent = await idempotencyGuard({
         req,
         tenantId,
         scope,
@@ -3436,7 +4554,7 @@ async function handleSharedObjects(req, res, url, requestId, rateHeaders) {
           correlationId: trace.correlationId
         }
       };
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 201,
@@ -3489,7 +4607,7 @@ async function handleSharedObjects(req, res, url, requestId, rateHeaders) {
 
     try {
       const scope = `${tenantId}:${existing.roomId}:objects:${objectId}:patch`;
-      const idempotent = idempotencyGuard({
+      const idempotent = await idempotencyGuard({
         req,
         tenantId,
         scope,
@@ -3562,7 +4680,7 @@ async function handleSharedObjects(req, res, url, requestId, rateHeaders) {
           correlationId: trace.correlationId
         }
       };
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 200,
@@ -3674,7 +4792,7 @@ async function handleTasks(req, res, url, requestId, rateHeaders) {
 
     try {
       const scope = `${tenantId}:${roomId}:tasks:create:${actorId}`;
-      const idempotent = idempotencyGuard({
+      const idempotent = await idempotencyGuard({
         req,
         tenantId,
         scope,
@@ -3785,7 +4903,7 @@ async function handleTasks(req, res, url, requestId, rateHeaders) {
           correlationId: trace.correlationId
         }
       };
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 201,
@@ -3837,7 +4955,7 @@ async function handleTasks(req, res, url, requestId, rateHeaders) {
 
     try {
       const scope = `${tenantId}:${existing.roomId}:tasks:${taskId}:patch`;
-      const idempotent = idempotencyGuard({
+      const idempotent = await idempotencyGuard({
         req,
         tenantId,
         scope,
@@ -3962,7 +5080,7 @@ async function handleTasks(req, res, url, requestId, rateHeaders) {
           correlationId: trace.correlationId
         }
       };
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 200,
@@ -4187,7 +5305,7 @@ async function handleReactionSubscriptions(req, res, url, requestId, rateHeaders
     });
 
     const scope = `${tenantId}:reactions:create`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -4219,7 +5337,7 @@ async function handleReactionSubscriptions(req, res, url, requestId, rateHeaders
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 201,
@@ -4252,7 +5370,7 @@ async function handleReactionSubscriptions(req, res, url, requestId, rateHeaders
     });
 
     const scope = `${existing.tenantId}:reactions:${req.method}:${subscriptionId}`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId: existing.tenantId,
       scope,
@@ -4280,7 +5398,7 @@ async function handleReactionSubscriptions(req, res, url, requestId, rateHeaders
           correlationId: trace.correlationId
         }
       };
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 200,
@@ -4308,7 +5426,7 @@ async function handleReactionSubscriptions(req, res, url, requestId, rateHeaders
         correlationId: trace.correlationId
       }
     };
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 200,
@@ -4481,7 +5599,7 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
     });
 
     const scope = `${tenantId}:subscriptions:dlq-replay:${dlqId}`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -4520,7 +5638,7 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 202,
@@ -4571,7 +5689,7 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
     });
 
     const scope = `${tenantId}:subscriptions:create`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -4603,7 +5721,7 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 201,
@@ -4638,7 +5756,7 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
     });
 
     const scope = `${tenantId}:subscriptions:${req.method}:${subscriptionId}`;
-    const idempotent = idempotencyGuard({
+    const idempotent = await idempotencyGuard({
       req,
       tenantId,
       scope,
@@ -4666,7 +5784,7 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
           correlationId: trace.correlationId
         }
       };
-      idempotency.commit({
+      await idempotency.commit({
         storageKey: idempotent.check.storageKey,
         requestHash: idempotent.requestHash,
         statusCode: 200,
@@ -4692,7 +5810,7 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
       }
     };
 
-    idempotency.commit({
+    await idempotency.commit({
       storageKey: idempotent.check.storageKey,
       requestHash: idempotent.requestHash,
       statusCode: 200,
@@ -4732,6 +5850,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     const url = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+    if (!requireRuntimeAuth(req, res, url, requestId, rateHeaders)) {
+      return;
+    }
 
     if (req.method === "GET" && url.pathname === "/healthz") {
       return json(
@@ -4743,6 +5864,7 @@ const server = http.createServer(async (req, res) => {
           time: new Date().toISOString(),
           storage: {
             eventStore: pgPool ? "postgres" : "file",
+            idempotency: pgPool ? "postgres" : "memory",
             subscriptions: pgPool ? "postgres" : "file",
             permissions: pgPool ? "postgres" : "file",
             operatorOverrides: pgPool ? "postgres" : "file",
@@ -4751,9 +5873,13 @@ const server = http.createServer(async (req, res) => {
             profiles: pgPool ? "postgres" : "file",
             tasks: pgPool ? "postgres" : "file",
             sharedObjects: pgPool ? "postgres" : "file",
+            rooms: pgPool ? "postgres" : "file",
+            tableSessions: pgPool ? "postgres" : "file",
             reactions: pgPool ? "postgres" : "file",
             roomContext: pgPool ? "postgres" : "file",
-            inbox: pgPool ? "postgres" : "file"
+            inbox: pgPool ? "postgres" : "file",
+            snapshots: pgPool ? "postgres" : "memory",
+            traces: pgPool ? "postgres" : "memory"
           },
           inboxProjector: {
             cursor: inboxProjectorState.cursor,
@@ -4774,6 +5900,12 @@ const server = http.createServer(async (req, res) => {
             maxRepeatedTextPerWindow: moderationPolicy.maxRepeatedTextPerWindow,
             minActionIntervalMs: moderationPolicy.minActionIntervalMs,
             cooldownMs: moderationPolicy.cooldownMs
+          },
+          privateTables: {
+            paymentMode: PRIVATE_TABLE_PAYMENT_MODE,
+            priceUsd: PRIVATE_TABLE_PRICE_USD,
+            defaultSessionMinutes: PRIVATE_TABLE_DEFAULT_SESSION_MINUTES,
+            webhookConfigured: Boolean(PRIVATE_TABLE_PAYMENT_WEBHOOK_URL)
           },
           webhooks: webhookDispatcher.getStats(),
           reactions: reactionEngine.getStats()
@@ -4829,6 +5961,14 @@ const server = http.createServer(async (req, res) => {
       return await handleRoomPinnedContextHistory(req, res, url, requestId, rateHeaders);
     }
 
+    if (url.pathname === "/v1/rooms" || /^\/v1\/rooms\/[^/]+$/.test(url.pathname)) {
+      return await handleRooms(req, res, url, requestId, rateHeaders);
+    }
+
+    if (url.pathname === "/v1/table-sessions" || /^\/v1\/table-sessions\/[^/]+$/.test(url.pathname)) {
+      return await handleTableSessions(req, res, url, requestId, rateHeaders);
+    }
+
     if (
       req.method === "GET" &&
       (url.pathname === "/v1/streams/market-events" || url.pathname === "/v1/events/stream")
@@ -4837,7 +5977,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/v1/traces/")) {
-      return handleTraceLookup(req, res, url, requestId, rateHeaders);
+      return await handleTraceLookup(req, res, url, requestId, rateHeaders);
     }
 
     if (url.pathname === "/v1/operator/audit") {
@@ -4931,4 +6071,7 @@ server.listen(PORT, HOST, () => {
   process.stdout.write(
     `agentcafe-api listening on http://${HOST}:${PORT} (storage=${pgPool ? "postgres" : "file"})\n`
   );
+  if (API_AUTH_TOKEN) {
+    process.stdout.write(`agentcafe-api auth enabled (query=${API_AUTH_QUERY_PARAM})\n`);
+  }
 });

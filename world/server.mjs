@@ -24,11 +24,15 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 const HOST = process.env.AGENTCAFE_HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || process.env.AGENTCAFE_PORT || 3846);
 const STREAM_HEARTBEAT_MS = Number(process.env.AGENTCAFE_STREAM_HEARTBEAT_MS || 15000);
+const STREAM_MAX_CLIENTS = Math.max(1, Number(process.env.AGENTCAFE_STREAM_MAX_CLIENTS || 250));
 const SWEEP_INTERVAL_MS = Number(process.env.AGENTCAFE_SWEEP_INTERVAL_MS || 1000);
+const WORLD_API_KEY = String(process.env.AGENTCAFE_WORLD_API_KEY || "").trim();
+const WORLD_API_AUTH_QUERY_PARAM = String(process.env.AGENTCAFE_WORLD_API_AUTH_QUERY_PARAM || "apiKey").trim() || "apiKey";
 const DUAL_WRITE_ENABLED = String(process.env.AGENTCAFE_DUAL_WRITE_ENABLED || "false").toLowerCase() === "true";
 const DUAL_WRITE_RUNTIME_API_URL = String(
   process.env.AGENTCAFE_RUNTIME_API_URL || "http://127.0.0.1:3850"
 ).replace(/\/$/, "");
+const RUNTIME_API_KEY = String(process.env.AGENTCAFE_RUNTIME_API_KEY || "").trim();
 const DUAL_WRITE_TIMEOUT_MS = Math.max(250, Number(process.env.AGENTCAFE_DUAL_WRITE_TIMEOUT_MS || 3000));
 const RUNTIME_PROXY_TIMEOUT_MS = Math.max(250, Number(process.env.AGENTCAFE_RUNTIME_PROXY_TIMEOUT_MS || 6000));
 const DUAL_WRITE_HISTORY_LIMIT = Math.max(
@@ -78,9 +82,70 @@ function sendError(res, statusCode, message) {
   });
 }
 
+function readProvidedApiKey(req, url) {
+  const headerKey = typeof req.headers["x-api-key"] === "string" ? req.headers["x-api-key"].trim() : "";
+  if (headerKey) {
+    return headerKey;
+  }
+  const authHeader = typeof req.headers.authorization === "string" ? req.headers.authorization.trim() : "";
+  if (/^bearer\s+/i.test(authHeader)) {
+    return authHeader.replace(/^bearer\s+/i, "").trim();
+  }
+  const queryValue = String(url.searchParams.get(WORLD_API_AUTH_QUERY_PARAM) || url.searchParams.get("token") || "").trim();
+  return queryValue;
+}
+
+function requireWorldAuth(req, res, url) {
+  if (!WORLD_API_KEY) {
+    return true;
+  }
+  if (readProvidedApiKey(req, url) === WORLD_API_KEY) {
+    return true;
+  }
+  sendError(res, 401, "unauthorized");
+  return false;
+}
+
+function runtimeAuthHeader() {
+  if (!RUNTIME_API_KEY) {
+    return {};
+  }
+  return {
+    "x-api-key": RUNTIME_API_KEY
+  };
+}
+
 function baseActorId(value) {
   const actorId = String(value || "").trim();
   return actorId || "agent";
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function moderationRetryDelayMs(errorPayload) {
+  if (!errorPayload || typeof errorPayload !== "object") {
+    return null;
+  }
+  if (errorPayload.code !== "ERR_MODERATION_BLOCKED") {
+    return null;
+  }
+  const details = errorPayload.details || {};
+  if (details.reasonCode !== "MOD_MIN_INTERVAL") {
+    return null;
+  }
+  const retryAfterMs = Number(details.retryAfterMs);
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return retryAfterMs;
+  }
+  const minIntervalMs = Number(details.minIntervalMs);
+  if (Number.isFinite(minIntervalMs) && minIntervalMs > 0) {
+    return minIntervalMs;
+  }
+  return null;
 }
 
 function appendDualWriteMetric(entry) {
@@ -175,29 +240,55 @@ async function replicateRuntimeWrite(action, input = {}) {
   };
 
   try {
-    const response = await fetch(`${DUAL_WRITE_RUNTIME_API_URL}${mapping.path}`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": `dw-${action}-${Date.now()}-${randomUUID()}`
-      },
-      body: JSON.stringify(mapping.payload),
-      signal: controller.signal
-    });
-    let body = null;
-    try {
-      body = await response.json();
-    } catch {
-      body = null;
+    let attempt = 0;
+    let retries = 0;
+    let success = false;
+    let statusCode = null;
+    let errorDetail = null;
+
+    while (attempt < 2 && !success) {
+      const response = await fetch(`${DUAL_WRITE_RUNTIME_API_URL}${mapping.path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": `dw-${action}-${Date.now()}-${randomUUID()}`,
+          ...runtimeAuthHeader()
+        },
+        body: JSON.stringify(mapping.payload),
+        signal: controller.signal
+      });
+      let body = null;
+      try {
+        body = await response.json();
+      } catch {
+        body = null;
+      }
+      success = response.ok && (!body || body.ok !== false);
+      statusCode = response.status;
+      errorDetail = success ? null : body?.error || `HTTP ${response.status}`;
+
+      if (success) {
+        break;
+      }
+
+      const delayMs = moderationRetryDelayMs(body?.error);
+      if (attempt === 0 && delayMs != null) {
+        retries += 1;
+        await sleep(Math.max(25, Math.min(delayMs, 2000)));
+        attempt += 1;
+        continue;
+      }
+      break;
     }
-    const success = response.ok && (!body || body.ok !== false);
+
     const finishedAt = Date.now();
     entry = {
       ...entry,
       success,
-      statusCode: response.status,
+      statusCode,
       latencyMs: finishedAt - startedAt,
-      error: success ? null : body?.error || `HTTP ${response.status}`
+      retries,
+      error: errorDetail
     };
 
     if (success) {
@@ -235,6 +326,17 @@ function runtimeProxyPath(pathname, searchParams) {
   return target;
 }
 
+function proxyRequestHeaders(req, allowList = []) {
+  const out = {};
+  for (const name of allowList) {
+    const raw = req.headers[name];
+    if (typeof raw === "string" && raw.trim()) {
+      out[name] = raw.trim();
+    }
+  }
+  return out;
+}
+
 async function proxyRuntimeJson(req, res, url, runtimePathname) {
   const upstreamUrl = runtimeProxyPath(runtimePathname, url.searchParams);
   const controller = new AbortController();
@@ -246,7 +348,15 @@ async function proxyRuntimeJson(req, res, url, runtimePathname) {
     const init = {
       method: req.method,
       headers: {
-        accept: "application/json"
+        ...proxyRequestHeaders(req, [
+          "idempotency-key",
+          "x-request-id",
+          "x-correlation-id",
+          "authorization",
+          "x-api-key"
+        ]),
+        accept: "application/json",
+        ...runtimeAuthHeader()
       },
       signal: controller.signal
     };
@@ -281,8 +391,8 @@ async function proxyRuntimeJson(req, res, url, runtimePathname) {
   }
 }
 
-async function proxyRuntimeSse(req, res, url) {
-  const upstreamUrl = runtimeProxyPath("/v1/streams/market-events", url.searchParams);
+async function proxyRuntimeSse(req, res, url, runtimePathname = "/v1/streams/market-events") {
+  const upstreamUrl = runtimeProxyPath(runtimePathname, url.searchParams);
   const controller = new AbortController();
   let reader = null;
 
@@ -296,7 +406,9 @@ async function proxyRuntimeSse(req, res, url) {
   try {
     const upstreamRes = await fetch(upstreamUrl, {
       headers: {
-        accept: "text/event-stream"
+        ...proxyRequestHeaders(req, ["last-event-id", "authorization", "x-api-key"]),
+        accept: "text/event-stream",
+        ...runtimeAuthHeader()
       },
       signal: controller.signal
     });
@@ -402,8 +514,9 @@ async function readBody(req) {
 
   try {
     return JSON.parse(raw);
-  } catch {
-    throw new Error("invalid JSON body");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`invalid JSON body: ${reason}`);
   }
 }
 
@@ -428,8 +541,12 @@ async function handleApi(req, res, url) {
     return sendJson(res, 200, { ok: true, service: "agentcafe-world" });
   }
 
+  if (!requireWorldAuth(req, res, url)) {
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/runtime/stream") {
-    return proxyRuntimeSse(req, res, url);
+    return proxyRuntimeSse(req, res, url, "/v1/streams/market-events");
   }
 
   if (req.method === "GET" && url.pathname === "/api/runtime/healthz") {
@@ -461,6 +578,46 @@ async function handleApi(req, res, url) {
     return proxyRuntimeJson(req, res, url, "/v1/tasks");
   }
 
+  if (req.method === "GET" && url.pathname === "/api/runtime/rooms") {
+    return proxyRuntimeJson(req, res, url, "/v1/rooms");
+  }
+
+  const runtimeRoomMatch = url.pathname.match(/^\/api\/runtime\/rooms\/([^/]+)$/);
+  if (req.method === "GET" && runtimeRoomMatch) {
+    return proxyRuntimeJson(req, res, url, `/v1/rooms/${encodeURIComponent(runtimeRoomMatch[1])}`);
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/runtime/rooms") {
+    return proxyRuntimeJson(req, res, url, "/v1/rooms");
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/runtime/table-sessions") {
+    return proxyRuntimeJson(req, res, url, "/v1/table-sessions");
+  }
+
+  const runtimeTableSessionMatch = url.pathname.match(/^\/api\/runtime\/table-sessions\/([^/]+)$/);
+  if (req.method === "GET" && runtimeTableSessionMatch) {
+    return proxyRuntimeJson(
+      req,
+      res,
+      url,
+      `/v1/table-sessions/${encodeURIComponent(runtimeTableSessionMatch[1])}`
+    );
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/runtime/table-sessions") {
+    return proxyRuntimeJson(req, res, url, "/v1/table-sessions");
+  }
+
+  if (req.method === "PATCH" && runtimeTableSessionMatch) {
+    return proxyRuntimeJson(
+      req,
+      res,
+      url,
+      `/v1/table-sessions/${encodeURIComponent(runtimeTableSessionMatch[1])}`
+    );
+  }
+
   if (req.method === "GET" && url.pathname === "/api/runtime/events") {
     return proxyRuntimeJson(req, res, url, "/v1/events");
   }
@@ -474,6 +631,9 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/stream") {
+    if (streamClients.size >= STREAM_MAX_CLIENTS) {
+      return sendError(res, 503, `stream client limit reached (${STREAM_MAX_CLIENTS})`);
+    }
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache",
@@ -520,6 +680,10 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/state") {
+    const sweep = sweepExpiredState();
+    if (sweep.changed) {
+      broadcastState("expiry");
+    }
     return sendJson(
       res,
       200,
@@ -599,6 +763,14 @@ async function handleApi(req, res, url) {
   sendError(res, 404, "route not found");
 }
 
+function isRuntimeDirectPath(pathname) {
+  return pathname === "/healthz" || pathname.startsWith("/v1/");
+}
+
+function isRuntimeDirectSsePath(pathname) {
+  return pathname === "/v1/streams/market-events" || pathname === "/v1/events/stream";
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     if (!req.url || !req.method) {
@@ -609,6 +781,16 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname.startsWith("/api/")) {
       return await handleApi(req, res, url);
+    }
+
+    if (isRuntimeDirectPath(url.pathname)) {
+      if (!requireWorldAuth(req, res, url)) {
+        return;
+      }
+      if (req.method === "GET" && isRuntimeDirectSsePath(url.pathname)) {
+        return proxyRuntimeSse(req, res, url, url.pathname);
+      }
+      return proxyRuntimeJson(req, res, url, url.pathname);
     }
 
     if (await serveStatic(res, url.pathname)) {
@@ -639,9 +821,15 @@ server.on("close", () => {
 
 server.listen(PORT, HOST, () => {
   process.stdout.write(`AgentCafe world listening on http://${HOST}:${PORT}\n`);
+  if (WORLD_API_KEY) {
+    process.stdout.write(`AgentCafe world API auth enabled (query=${WORLD_API_AUTH_QUERY_PARAM})\n`);
+  }
   if (DUAL_WRITE_ENABLED) {
     process.stdout.write(
       `AgentCafe dual-write enabled -> ${DUAL_WRITE_RUNTIME_API_URL} (tenant=${DUAL_WRITE_TENANT_ID}, room=${DUAL_WRITE_ROOM_ID})\n`
     );
+  }
+  if (RUNTIME_API_KEY) {
+    process.stdout.write("AgentCafe runtime proxy auth enabled\n");
   }
 });

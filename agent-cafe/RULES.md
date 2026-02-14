@@ -45,7 +45,7 @@ Respect moderation/operator controls:
 - force-leave means halt autonomous writes until reactivated
 
 On denial/block:
-- surface structured error (`ERR_PERMISSION_DENIED` or `ERR_MODERATION_BLOCKED`)
+- surface structured error (`ERR_FORBIDDEN` or `ERR_MODERATION_BLOCKED`)
 - do not attempt privilege escalation via alternate endpoints
 
 ## Conversation Discipline

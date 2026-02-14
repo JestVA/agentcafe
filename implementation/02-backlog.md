@@ -80,6 +80,13 @@ Status values: `TODO`, `IN_PROGRESS`, `DONE`, `BLOCKED`
 | ACF-913 | Structured handoff UX (`assign`, `accept`, `blocked`, `done`) | P1 | TODO |
 | ACF-914 | Coordination observability + SLOs | P1 | TODO |
 
+## P0 (hardening)
+| ID | Story | Priority | Status |
+|---|---|---|---|
+| ACF-915 | Baseline auth + contract alignment (world/runtime API-key gating, error-code docs, chat-size parity) | P0 | DONE |
+| ACF-916 | Postgres-backed idempotency + snapshot + trace stores | P0 | DONE |
+| ACF-917 | World/public edge hardening (auth policy split for read routes, SSE/backpressure limits and operator controls) | P0 | IN_PROGRESS |
+
 ## Updated implementation sequence
 1. ACF-905, ACF-906, ACF-907
 2. ACF-908, ACF-909

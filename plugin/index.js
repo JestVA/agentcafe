@@ -20,6 +20,8 @@ const RUNTIME_QUERY_PATHS = {
   presence_last_seen: "/v1/presence/last-seen",
   pinned_context: "/v1/rooms/context/pin",
   pinned_context_history: "/v1/rooms/context/history",
+  rooms: "/v1/rooms",
+  table_sessions: "/v1/table-sessions",
   tasks: "/v1/tasks",
   objects: "/v1/objects",
   profiles: "/v1/profiles",
@@ -88,7 +90,12 @@ const plugin = {
     const configuredActorId = config.actorId || DEFAULT_ACTOR_ID;
     const configuredTenantId = config.tenantId || DEFAULT_TENANT_ID;
     const configuredRoomId = config.roomId || DEFAULT_ROOM_ID;
-    const client = new AgentCafeClient({ worldUrl, runtimeUrl });
+    const client = new AgentCafeClient({
+      worldUrl,
+      runtimeUrl,
+      worldApiKey: config.worldApiKey,
+      runtimeApiKey: config.runtimeApiKey
+    });
 
     const withActor = (input = {}) => ({
       ...input,
@@ -464,6 +471,119 @@ const plugin = {
         });
         const response = await client.runtimePinRoomContext(body);
         return runtimeOk("room_context_pin", response);
+      }
+    });
+
+    api.registerTool({
+      name: "runtimeUpsertRoom",
+      description: "Create or update room metadata (lobby|private_table). Private tables require paymentProof.",
+      parameters: {
+        type: "object",
+        properties: {
+          actorId: { type: "string" },
+          tenantId: { type: "string" },
+          roomId: { type: "string" },
+          roomType: { type: "string", enum: ["lobby", "private_table"] },
+          ownerActorId: { type: "string" },
+          displayName: { type: "string" },
+          paymentProof: { type: "string" },
+          paymentRef: { type: "string" },
+          paymentAmountUsd: { type: "number" },
+          metadata: { type: "object", additionalProperties: true }
+        },
+        required: ["roomId"],
+        additionalProperties: false
+      },
+      execute: async (input = {}) => {
+        const body = definedEntries({
+          ...withRuntimeContext(input, { includeActor: true }),
+          roomId: maybeString(input.roomId),
+          roomType: maybeString(input.roomType),
+          ownerActorId: maybeString(input.ownerActorId, null),
+          displayName: maybeString(input.displayName, null),
+          paymentProof: maybeString(input.paymentProof, null),
+          paymentRef: maybeString(input.paymentRef, null),
+          paymentAmountUsd: maybeFiniteNumber(input.paymentAmountUsd),
+          metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : undefined
+        });
+        const response = await client.runtimeUpsertRoom(body);
+        return runtimeOk("room_upsert", response);
+      }
+    });
+
+    api.registerTool({
+      name: "runtimeCreateTableSession",
+      description: "Create a private-table collaboration session (payment-gated).",
+      parameters: {
+        type: "object",
+        properties: {
+          actorId: { type: "string" },
+          tenantId: { type: "string" },
+          roomId: { type: "string" },
+          ownerActorId: { type: "string" },
+          invitedActorIds: { type: "array", items: { type: "string" } },
+          displayName: { type: "string" },
+          startedAt: { type: "string" },
+          expiresAt: { type: "string" },
+          durationMinutes: { type: "number" },
+          paymentProof: { type: "string" },
+          paymentRef: { type: "string" },
+          paymentAmountUsd: { type: "number" },
+          metadata: { type: "object", additionalProperties: true }
+        },
+        additionalProperties: false
+      },
+      execute: async (input = {}) => {
+        const body = definedEntries({
+          ...withRuntimeContext(input, { includeActor: true }),
+          roomId: maybeString(input.roomId, null),
+          ownerActorId: maybeString(input.ownerActorId, null),
+          invitedActorIds: maybeArray(input.invitedActorIds),
+          displayName: maybeString(input.displayName, null),
+          startedAt: maybeString(input.startedAt, null),
+          expiresAt: maybeString(input.expiresAt, null),
+          durationMinutes: maybeFiniteNumber(input.durationMinutes),
+          paymentProof: maybeString(input.paymentProof, null),
+          paymentRef: maybeString(input.paymentRef, null),
+          paymentAmountUsd: maybeFiniteNumber(input.paymentAmountUsd),
+          metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : undefined
+        });
+        const response = await client.runtimeCreateTableSession(body);
+        return runtimeOk("table_session_create", response);
+      }
+    });
+
+    api.registerTool({
+      name: "runtimeUpdateTableSession",
+      description: "Patch an existing table session (invite list/status/expiry).",
+      parameters: {
+        type: "object",
+        properties: {
+          sessionId: { type: "string" },
+          actorId: { type: "string" },
+          tenantId: { type: "string" },
+          invitedActorIds: { type: "array", items: { type: "string" } },
+          status: { type: "string", enum: ["active", "ended"] },
+          startedAt: { type: "string" },
+          expiresAt: { type: "string" },
+          endedAt: { type: "string" },
+          metadata: { type: "object", additionalProperties: true }
+        },
+        required: ["sessionId"],
+        additionalProperties: false
+      },
+      execute: async (input = {}) => {
+        const body = definedEntries({
+          ...withRuntimeContext(input, { includeActor: true }),
+          invitedActorIds: maybeArray(input.invitedActorIds),
+          status: maybeString(input.status),
+          startedAt: maybeString(input.startedAt, null),
+          expiresAt: maybeString(input.expiresAt, null),
+          endedAt: maybeString(input.endedAt, null),
+          metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : undefined
+        });
+        const response = await client.runtimePatchTableSession(input.sessionId, body);
+        return runtimeOk("table_session_update", response);
       }
     });
 

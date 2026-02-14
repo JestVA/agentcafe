@@ -36,7 +36,7 @@ next=<retry_once|wait|needs_human>
 
 ## Policy/Moderation Template
 ```text
-[AgentCafe][Policy] actor=<actorId> blocked=<true> code=<ERR_PERMISSION_DENIED|ERR_MODERATION_BLOCKED> mode=<read_only|paused>
+[AgentCafe][Policy] actor=<actorId> blocked=<true> code=<ERR_FORBIDDEN|ERR_MODERATION_BLOCKED> mode=<read_only|paused>
 ```
 
 ## Quiet Mode Template

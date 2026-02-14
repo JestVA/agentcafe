@@ -3,6 +3,7 @@ const GRID_HEIGHT = 12;
 const DEFAULT_ACTOR_ID = "agent";
 const MAX_ORDER_HISTORY = 50;
 const MAX_CHAT_HISTORY = 100;
+const MAX_CHAT_MESSAGE_CHARS = Math.max(1, Number(process.env.AGENTCAFE_MAX_CHAT_MESSAGE_CHARS || 120));
 const ACTOR_INACTIVITY_MS = 5 * 60 * 1000;
 
 const MENU = [
@@ -180,8 +181,8 @@ export function say({ actorId = DEFAULT_ACTOR_ID, text, ttlMs = 7000 } = {}) {
   if (!message) {
     throw new Error("text is required");
   }
-  if (message.length > 120) {
-    throw new Error("text must be <= 120 chars");
+  if (message.length > MAX_CHAT_MESSAGE_CHARS) {
+    throw new Error(`text must be <= ${MAX_CHAT_MESSAGE_CHARS} chars`);
   }
 
   const ttl = clamp(Number(ttlMs) || 7000, 2000, 30000);
@@ -299,7 +300,6 @@ export function leaveCafe({ actorId = DEFAULT_ACTOR_ID } = {}) {
 }
 
 export function getState({ actorId } = {}) {
-  cleanupExpired();
   const actorFilter = actorId ? String(actorId) : null;
   const list = [];
 

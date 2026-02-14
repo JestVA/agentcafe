@@ -865,3 +865,90 @@ Append one section per implementation run.
 - Notes:
   - Added world proxy routes for `/api/runtime/presence` and `/api/runtime/tasks`.
   - Runtime stream now drives inbox/tasks/presence refresh cadence via event-triggered debounced updates.
+
+## 2026-02-14 - P0 hardening slice (auth + limits + contract alignment)
+- Author: Codex
+- Stories completed/updated:
+  - `ACF-915` DONE (baseline auth + contract alignment)
+  - `ACF-917` IN_PROGRESS (world edge hardening)
+- Files added:
+  - `implementation/stories/E11-hardening.md`
+- Files updated:
+  - `.env.example`
+  - `README.md`
+  - `agent-cafe/SKILL.md`
+  - `agent-cafe/RULES.md`
+  - `agent-cafe/MESSAGING.md`
+  - `plugin/http-client.js`
+  - `plugin/index.js`
+  - `runtime/README.md`
+  - `runtime/api/server.mjs`
+  - `runtime/shared/conversation.mjs`
+  - `world/server.mjs`
+  - `world/state.mjs`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 32 passed, 0 failed.
+- Notes:
+  - Added optional API-key auth for world/runtime endpoints (health endpoints excluded).
+  - Added world SSE connection cap to reduce exhaustion risk.
+  - Aligned runtime/world text length constraints via configurable max chat chars.
+  - Corrected documented permission error code to `ERR_FORBIDDEN`.
+
+## 2026-02-14 - ACF-916 durable idempotency/snapshot/trace stores
+- Author: Codex
+- Stories completed/updated:
+  - `ACF-916` DONE (Postgres-backed idempotency/snapshot/trace stores)
+- Files added:
+  - `runtime/api/idempotency-store-pg.mjs`
+  - `runtime/api/snapshot-store-pg.mjs`
+  - `runtime/api/trace-store-pg.mjs`
+  - `runtime/db/migrations/012_durable_runtime_stores.sql`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/README.md`
+  - `.env.example`
+  - `package.json`
+  - `implementation/02-backlog.md`
+  - `implementation/stories/E11-hardening.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+  - `runtime:test` results: 32 passed, 0 failed.
+- Notes:
+  - Runtime now auto-selects durable idempotency, snapshot, and trace stores when `DATABASE_URL` is configured.
+  - Snapshot reads/writes and trace lookup were updated to support async DB-backed implementations.
+
+## 2026-02-14 - Railway deploy + migration apply (ACF-916)
+- Author: Codex
+- Scope:
+  - Deployed `agentcafe-api` to Railway with corrected deploy path handling (`--path-as-root`).
+  - Verified migration application and runtime health/storage mode in production.
+- Deployments:
+  - Failed attempt: `335d90bf-74f0-4f4b-9529-03b5c60adf92` (wrong build context)
+  - Failed attempt: `55b4c98d-8769-4ea2-a583-bcd60ce2225f` (nested path still wrong)
+  - Successful: `72bdcd8d-6eb0-4b12-b936-13e25a9231f3`
+- Verification:
+  - Runtime logs: `agentcafe-api applied 1 migration(s): 012_durable_runtime_stores.sql`
+  - Runtime logs: `agentcafe-api listening on http://0.0.0.0:3850 (storage=postgres)`
+  - Public proxy health: `/api/runtime/healthz` reports `idempotency=snapshots=traces=postgres`.
+
+## 2026-02-14 - Public runtime route passthrough fix on AgentCafe domain
+- Author: Codex
+- Scope:
+  - Added direct runtime passthrough for `/v1/*` and `/healthz` on world server domain.
+  - Kept existing `/api/runtime/*` proxies and SSE support.
+- Files updated:
+  - `world/server.mjs`
+  - `README.md`
+- Deployments:
+  - `agentcafe-api` successful deploy: `72bdcd8d-6eb0-4b12-b936-13e25a9231f3`
+  - `AgentCafe` world successful deploy: `48dccb89-cbb2-4038-b80f-da7b0c267cbc`
+- Verification (public):
+  - `GET https://agentcafe-production.up.railway.app/v1/events?limit=2` -> `ok: true`
+  - `GET https://agentcafe-production.up.railway.app/v1/mentions?actorId=Nova&limit=2` -> `ok: true`
+  - `GET https://agentcafe-production.up.railway.app/healthz` -> runtime health payload with postgres-backed stores.

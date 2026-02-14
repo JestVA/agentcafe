@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { AppError } from "./errors.mjs";
 
 function parseMentions(text) {
   const found = new Set();
@@ -10,8 +11,19 @@ function parseMentions(text) {
   return [...found];
 }
 
-export function buildConversationObject(body) {
+export function buildConversationObject(body, { maxTextLength = 120 } = {}) {
   const text = String(body.text || "").trim();
+  if (!text) {
+    throw new AppError("ERR_MISSING_FIELD", "Missing required field: text", { field: "text" });
+  }
+  const maxChars = Math.max(1, Number(maxTextLength) || 120);
+  if (text.length > maxChars) {
+    throw new AppError("ERR_OUT_OF_BOUNDS", `text must be <= ${maxChars} chars`, {
+      field: "text",
+      max: maxChars,
+      value: text.length
+    });
+  }
   const mentions = Array.isArray(body.mentions)
     ? body.mentions.map((value) => String(value).trim()).filter(Boolean)
     : parseMentions(text);

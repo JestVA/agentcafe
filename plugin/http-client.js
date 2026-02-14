@@ -34,7 +34,7 @@ function formatErrorReason(payload, status) {
 }
 
 export class AgentCafeClient {
-  constructor({ baseUrl, worldUrl, runtimeUrl } = {}) {
+  constructor({ baseUrl, worldUrl, runtimeUrl, worldApiKey, runtimeApiKey } = {}) {
     const resolvedWorld =
       worldUrl || baseUrl || process.env.AGENTCAFE_WORLD_URL || DEFAULT_WORLD_URL;
     const resolvedRuntime =
@@ -46,6 +46,13 @@ export class AgentCafeClient {
 
     this.worldUrl = String(resolvedWorld).replace(/\/$/, "");
     this.runtimeUrl = String(resolvedRuntime).replace(/\/$/, "");
+    this.worldApiKey = String(worldApiKey || process.env.AGENTCAFE_WORLD_API_KEY || "").trim();
+    this.runtimeApiKey = String(
+      runtimeApiKey ||
+      process.env.AGENTCAFE_RUNTIME_API_KEY ||
+      process.env.API_AUTH_TOKEN ||
+      this.worldApiKey
+    ).trim();
   }
 
   async #request(baseUrl, path, options = {}) {
@@ -83,11 +90,25 @@ export class AgentCafeClient {
   }
 
   #world(path, options = {}) {
-    return this.#request(this.worldUrl, path, options);
+    const headers = {
+      ...(options.headers || {}),
+      ...(this.worldApiKey ? { "x-api-key": this.worldApiKey } : {})
+    };
+    return this.#request(this.worldUrl, path, {
+      ...options,
+      headers
+    });
   }
 
   #runtime(path, options = {}) {
-    return this.#request(this.runtimeUrl, path, options);
+    const headers = {
+      ...(options.headers || {}),
+      ...(this.runtimeApiKey ? { "x-api-key": this.runtimeApiKey } : {})
+    };
+    return this.#request(this.runtimeUrl, path, {
+      ...options,
+      headers
+    });
   }
 
   // Legacy world API
@@ -222,6 +243,46 @@ export class AgentCafeClient {
   runtimePinRoomContext(body = {}) {
     return this.#runtime("/v1/rooms/context/pin", {
       method: "POST",
+      body,
+      idempotent: true
+    });
+  }
+
+  runtimeRooms(query = {}) {
+    return this.#runtime(`/v1/rooms${toQueryString(query)}`);
+  }
+
+  runtimeRoom(roomId, query = {}) {
+    return this.#runtime(`/v1/rooms/${encodeURIComponent(roomId)}${toQueryString(query)}`);
+  }
+
+  runtimeUpsertRoom(body = {}) {
+    return this.#runtime("/v1/rooms", {
+      method: "POST",
+      body,
+      idempotent: true
+    });
+  }
+
+  runtimeTableSessions(query = {}) {
+    return this.#runtime(`/v1/table-sessions${toQueryString(query)}`);
+  }
+
+  runtimeTableSession(sessionId, query = {}) {
+    return this.#runtime(`/v1/table-sessions/${encodeURIComponent(sessionId)}${toQueryString(query)}`);
+  }
+
+  runtimeCreateTableSession(body = {}) {
+    return this.#runtime("/v1/table-sessions", {
+      method: "POST",
+      body,
+      idempotent: true
+    });
+  }
+
+  runtimePatchTableSession(sessionId, body = {}) {
+    return this.#runtime(`/v1/table-sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
       body,
       idempotent: true
     });

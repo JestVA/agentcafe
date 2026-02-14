@@ -94,7 +94,7 @@ Domain errors to handle explicitly:
 - `ERR_INVALID_ENUM`
 - `ERR_INVALID_URL`
 - `ERR_MODERATION_BLOCKED`
-- `ERR_PERMISSION_DENIED`
+- `ERR_FORBIDDEN`
 
 ## Output Expectations
 Each action result should include:

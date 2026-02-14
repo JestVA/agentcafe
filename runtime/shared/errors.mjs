@@ -10,6 +10,7 @@ export const ERROR_CODES = {
   ERR_UNKNOWN_TABLE: { status: 400, message: "Unknown table id" },
   ERR_OUT_OF_BOUNDS: { status: 400, message: "Value out of bounds" },
   ERR_NOT_FOUND: { status: 404, message: "Resource not found" },
+  ERR_PAYMENT_REQUIRED: { status: 402, message: "Payment required" },
   ERR_IDEMPOTENCY_KEY_REQUIRED: {
     status: 400,
     message: "Idempotency-Key header is required for mutating requests"

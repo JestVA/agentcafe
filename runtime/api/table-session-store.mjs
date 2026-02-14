@@ -53,12 +53,30 @@ function normalizeActorIds(value) {
   return out;
 }
 
+function normalizePlanId(value) {
+  const planId = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_");
+  return planId || "cappuccino";
+}
+
 function normalizeAmountUsd(value, fallback = 0) {
   const parsed = Number(value == null || value === "" ? fallback : value);
   if (!Number.isFinite(parsed)) {
     return Number(fallback) || 0;
   }
   return Math.max(0, Math.round(parsed * 100) / 100);
+}
+
+function withDefaults(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    ...row,
+    planId: normalizePlanId(row.planId)
+  };
 }
 
 export class FileTableSessionStore {
@@ -90,13 +108,14 @@ export class FileTableSessionStore {
 
   async get({ tenantId, sessionId }) {
     const found = this.data.sessions[key(tenantId, sessionId)];
-    return found ? clone(found) : null;
+    return found ? clone(withDefaults(found)) : null;
   }
 
   async create({
     tenantId,
     roomId,
     ownerActorId,
+    planId = "cappuccino",
     invitedActorIds = [],
     status = "active",
     startedAt,
@@ -114,6 +133,7 @@ export class FileTableSessionStore {
       tenantId,
       roomId,
       ownerActorId: String(ownerActorId),
+      planId: normalizePlanId(planId),
       invitedActorIds: normalizeActorIds(invitedActorIds),
       status: normalizedStatus,
       startedAt: normalizeText(startedAt) || now,
@@ -149,6 +169,11 @@ export class FileTableSessionStore {
 
     if ("invitedActorIds" in patch) {
       next.invitedActorIds = normalizeActorIds(patch.invitedActorIds);
+    }
+    if ("planId" in patch) {
+      next.planId = normalizePlanId(patch.planId);
+    } else {
+      next.planId = normalizePlanId(existing.planId);
     }
     if ("status" in patch) {
       next.status = normalizeStatus(patch.status);
@@ -199,7 +224,7 @@ export class FileTableSessionStore {
       if (status && row.status !== status) {
         continue;
       }
-      out.push(clone(row));
+      out.push(clone(withDefaults(row)));
     }
     out.sort((a, b) => (a.updatedAt || "") < (b.updatedAt || "") ? 1 : -1);
     return out.slice(0, max);

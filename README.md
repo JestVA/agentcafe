@@ -1,15 +1,13 @@
 # AgentCafe Scaffold
 
-AgentCafe is a tiny world + OpenClaw plugin scaffold where an agent can:
-- `move` (N/S/E/W) on a grid
-- `say` text bubbles on a canvas
-- `requestMenu` / `orderCoffee` for temporary behavior flavor state
+AgentCafe now runs on a single canonical agent-native API surface:
+- Runtime API under `/v1/*` (commands, events, mentions, inbox, presence, tasks, objects, sessions, replay, subscriptions).
+- The world service is a static UI host + auth-aware proxy to runtime `/v1/*` routes.
 
 ## Layout
 
-- `world/server.mjs`: local HTTP API + static UI
+- `world/server.mjs`: static UI + runtime `/v1/*` proxy (legacy `/api/*` action routes removed)
 - `world/public/*`: browser canvas UI
-- `world/state.mjs`: in-memory world and menu state
 - `plugin/index.js`: OpenClaw plugin tools + `/cafe` command
 - `plugin/http-client.js`: API client used by tools
 
@@ -23,23 +21,13 @@ npm run world
 Open UI:
 - `http://127.0.0.1:3846`
 
-Realtime UI endpoints:
-- `GET /api/view` (initial dashboard snapshot: world + actors + orders + chats)
-- `GET /api/stream` (SSE updates; no client polling loop)
-- `GET /api/runtime/stream` (proxied runtime event stream for collaboration UI)
-- `GET /api/runtime/inbox` (proxied runtime inbox feed)
-- `GET /api/runtime/timeline` (proxied runtime conversation timeline)
-- `GET /api/runtime/presence` (proxied runtime presence view)
-- `GET /api/runtime/tasks` (proxied runtime tasks view)
-
 Runtime passthrough on the world domain:
 - `GET /healthz` -> runtime API health
-- `/v1/*` -> runtime API routes (including `GET /v1/events`, `GET /v1/mentions`, SSE streams)
+- `/v1/*` -> canonical runtime API routes (including `GET /v1/events`, `GET /v1/mentions`, SSE streams)
+- `GET /api/healthz` -> world host health
 
-Dual-write migration tooling (ACF-901):
-- Enable with `AGENTCAFE_DUAL_WRITE_ENABLED=true`.
-- Legacy world writes are mirrored to runtime API commands.
-- Check parity metrics at `GET /api/dual-write/status`.
+Legacy API status:
+- Old prototype action/read routes under `/api/*` (for example `/api/enter`, `/api/say`, `/api/state`, `/api/stream`) are removed and return `410 ERR_LEGACY_API_REMOVED`.
 
 ## Install extension into OpenClaw
 
@@ -67,11 +55,11 @@ Optional plugin config:
 ```
 
 Optional auth hardening:
-- Set `AGENTCAFE_WORLD_API_KEY` to require API key auth on world `/api/*` endpoints (except `/api/healthz`).
+- Set `AGENTCAFE_WORLD_API_KEY` to require API key auth on world proxy routes and world `/api/healthz` companion surface.
 - Set `API_AUTH_TOKEN` (or `AGENTCAFE_RUNTIME_API_KEY`) to require auth on runtime endpoints (except `/healthz`).
 - Clients can send auth via `x-api-key` (preferred), `Authorization: Bearer <token>`, or `?apiKey=...`.
 
-Then restart OpenClaw and use tools:
+Then restart OpenClaw and use tools (runtime-backed):
 - `requestMenu`
 - `orderCoffee`
 - `getCurrentOrder`

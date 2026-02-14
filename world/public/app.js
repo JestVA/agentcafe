@@ -7,7 +7,6 @@ const inboxList = document.getElementById("inboxList");
 const presenceList = document.getElementById("presenceList");
 const presenceListFooter = document.getElementById("presenceListFooter");
 const taskList = document.getElementById("taskList");
-const streamStatus = document.getElementById("streamStatus");
 const runtimeStatus = document.getElementById("runtimeStatus");
 const roomModeText = document.getElementById("roomModeText");
 const focusRoomInput = document.getElementById("focusRoomInput");
@@ -32,6 +31,32 @@ const WORLD = {
 };
 
 const CELL = 48;
+const DEFAULT_ACTOR_X = Math.floor(WORLD.width / 2);
+const DEFAULT_ACTOR_Y = Math.floor(WORLD.height / 2);
+const DEFAULT_BUBBLE_TTL_MS = 7000;
+const MENU = [
+  {
+    id: "espresso_make_no_mistake",
+    name: "Espresso - Make No Mistake",
+    flavor: "Be precise, decisive, and verify assumptions before action."
+  },
+  {
+    id: "americano_sprint",
+    name: "Americano - Sprint",
+    flavor: "Move fast, prioritize progress, keep explanations minimal."
+  },
+  {
+    id: "cappuccino_flow",
+    name: "Cappuccino - Flow",
+    flavor: "Creative but structured: propose options, then choose one and execute."
+  },
+  {
+    id: "decaf_reflect",
+    name: "Decaf - Reflect",
+    flavor: "Pause and review: debug, audit, and reduce risk before changes."
+  }
+];
+
 const RUNTIME = {
   tenantId: "default",
   roomId: "main",
@@ -55,9 +80,9 @@ const runtimeState = {
   rooms: [],
   sessions: [],
   tasks: [],
-  worldConnected: false,
   runtimeConnected: false,
-  lastRuntimeEventAt: null
+  lastRuntimeEventAt: null,
+  worldActorsById: new Map()
 };
 
 const TASK_EVENT_TYPES = new Set([
@@ -81,6 +106,17 @@ const ROOM_EVENT_TYPES = new Set([
   "table_session_created",
   "table_session_updated",
   "table_session_ended"
+]);
+
+const WORLD_EVENT_TYPES = new Set([
+  "agent_entered",
+  "agent_left",
+  "actor_moved",
+  "intent_completed",
+  "conversation_message_posted",
+  "order_changed",
+  "presence_heartbeat",
+  "status_changed"
 ]);
 
 let runtimeStreamSource = null;
@@ -460,8 +496,7 @@ function updateRoomModeText() {
   ).length;
   const ownerLabel = focusedRoom.ownerActorId ? ` | owner ${focusedRoom.ownerActorId}` : "";
   roomModeText.textContent =
-    `Room mode: ${focusedRoom.roomType} (${focusedRoom.roomId})` +
-    `${ownerLabel} | active sessions ${activeSessions}`;
+    `Room mode: ${focusedRoom.roomType} (${focusedRoom.roomId})` + `${ownerLabel} | active sessions ${activeSessions}`;
 }
 
 function renderRooms(rooms) {
@@ -500,13 +535,6 @@ function renderSessions(sessions) {
   }
 }
 
-function applyWorldState(data) {
-  WORLD.width = data.world.width;
-  WORLD.height = data.world.height;
-  WORLD.actors = Array.isArray(data.actors) ? data.actors : [];
-  render();
-}
-
 function parseStreamData(event) {
   try {
     return JSON.parse(event.data || "{}");
@@ -516,11 +544,7 @@ function parseStreamData(event) {
 }
 
 function toRuntimeChat(event) {
-  const text =
-    event?.payload?.conversation?.text ||
-    event?.payload?.bubble?.text ||
-    event?.payload?.text ||
-    "";
+  const text = event?.payload?.conversation?.text || event?.payload?.bubble?.text || event?.payload?.text || "";
   if (!text) {
     return null;
   }
@@ -551,12 +575,6 @@ function toRuntimeOrder(event) {
     size: event?.payload?.size || "regular",
     orderedAt: event.timestamp || new Date().toISOString()
   };
-}
-
-function setStreamStatus(text) {
-  if (streamStatus) {
-    streamStatus.textContent = text;
-  }
 }
 
 function setRuntimeStatus(text) {
@@ -620,9 +638,197 @@ function debounce(fn, waitMs) {
   };
 }
 
+function ensureWorldActor(map, actorId) {
+  const id = String(actorId || "agent");
+  let actor = map.get(id);
+  if (!actor) {
+    actor = {
+      id,
+      x: DEFAULT_ACTOR_X,
+      y: DEFAULT_ACTOR_Y,
+      inCafe: true,
+      bubble: null,
+      currentOrder: null,
+      status: "idle",
+      lastActiveAt: Date.now()
+    };
+    map.set(id, actor);
+  }
+  return actor;
+}
+
+function moveActorPosition(actor, direction, steps) {
+  const n = clamp(Number(steps) || 1, 1, 50);
+  if (direction === "N") {
+    actor.y = clamp(actor.y - n, 0, WORLD.height - 1);
+  } else if (direction === "S") {
+    actor.y = clamp(actor.y + n, 0, WORLD.height - 1);
+  } else if (direction === "E") {
+    actor.x = clamp(actor.x + n, 0, WORLD.width - 1);
+  } else if (direction === "W") {
+    actor.x = clamp(actor.x - n, 0, WORLD.width - 1);
+  }
+}
+
+function applyEventToWorld(map, event) {
+  const type = event?.type;
+  const actorId = event?.actorId;
+  if (!type || !actorId) {
+    return;
+  }
+
+  if (type === "agent_left") {
+    map.delete(actorId);
+    return;
+  }
+
+  const actor = ensureWorldActor(map, actorId);
+  actor.lastActiveAt = Date.parse(event.timestamp || "") || Date.now();
+
+  if (type === "agent_entered") {
+    actor.inCafe = true;
+    actor.status = "idle";
+    const px = Number(event?.payload?.position?.x);
+    const py = Number(event?.payload?.position?.y);
+    if (Number.isFinite(px) && Number.isFinite(py)) {
+      actor.x = clamp(px, 0, WORLD.width - 1);
+      actor.y = clamp(py, 0, WORLD.height - 1);
+    }
+    return;
+  }
+
+  if (type === "actor_moved") {
+    actor.inCafe = true;
+    actor.status = "busy";
+    moveActorPosition(actor, String(event?.payload?.direction || "").toUpperCase(), Number(event?.payload?.steps || 1));
+    return;
+  }
+
+  if (type === "intent_completed") {
+    actor.inCafe = true;
+    actor.status = "idle";
+    const px = Number(event?.payload?.finalPosition?.x);
+    const py = Number(event?.payload?.finalPosition?.y);
+    if (Number.isFinite(px) && Number.isFinite(py)) {
+      actor.x = clamp(px, 0, WORLD.width - 1);
+      actor.y = clamp(py, 0, WORLD.height - 1);
+    }
+    return;
+  }
+
+  if (type === "conversation_message_posted") {
+    actor.inCafe = true;
+    actor.status = "thinking";
+    const text = event?.payload?.conversation?.text || event?.payload?.bubble?.text || "";
+    if (text) {
+      const ttlMs = clamp(Number(event?.payload?.bubble?.ttlMs || DEFAULT_BUBBLE_TTL_MS), 2000, 30000);
+      actor.bubble = {
+        text,
+        expiresAt: Date.now() + ttlMs
+      };
+    }
+    return;
+  }
+
+  if (type === "order_changed") {
+    actor.inCafe = true;
+    actor.status = "busy";
+    const itemId = event?.payload?.itemId || "";
+    const menuItem = menuById.get(itemId);
+    actor.currentOrder = {
+      itemId,
+      size: event?.payload?.size || "regular",
+      name: menuItem?.name || itemId,
+      orderedAt: event.timestamp || new Date().toISOString()
+    };
+    return;
+  }
+
+  if (type === "presence_heartbeat") {
+    actor.status = event?.payload?.status || actor.status;
+    actor.inCafe = true;
+    return;
+  }
+
+  if (type === "status_changed") {
+    const toStatus = event?.payload?.toStatus || event?.payload?.to || actor.status;
+    actor.status = toStatus;
+    actor.inCafe = toStatus !== "inactive" ? true : actor.inCafe;
+  }
+}
+
+function applyWorldFromMap() {
+  WORLD.actors = [...runtimeState.worldActorsById.values()]
+    .filter((actor) => actor.inCafe)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  render();
+}
+
+function projectWorldFromEvents(events = []) {
+  const map = new Map();
+  const ordered = [...events].sort((a, b) => {
+    const as = Number(a?.sequence || 0);
+    const bs = Number(b?.sequence || 0);
+    if (as && bs && as !== bs) {
+      return as - bs;
+    }
+    return String(a?.timestamp || "").localeCompare(String(b?.timestamp || ""));
+  });
+
+  for (const event of ordered) {
+    applyEventToWorld(map, event);
+  }
+
+  for (const presence of runtimeState.presence) {
+    if (!presence?.actorId || presence.isActive === false) {
+      continue;
+    }
+    const actor = ensureWorldActor(map, presence.actorId);
+    actor.status = presence.status || actor.status;
+    actor.inCafe = true;
+  }
+
+  runtimeState.worldActorsById = map;
+  applyWorldFromMap();
+}
+
+function sweepWorldBubbles() {
+  const now = Date.now();
+  let changed = false;
+  for (const actor of runtimeState.worldActorsById.values()) {
+    if (actor.bubble && Number(actor.bubble.expiresAt || 0) <= now) {
+      actor.bubble = null;
+      changed = true;
+    }
+  }
+  if (changed) {
+    applyWorldFromMap();
+  }
+}
+
+async function refreshRuntimeWorld() {
+  const replayPath =
+    `/v1/replay?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&minutes=120`;
+  const timelinePath =
+    `/v1/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&order=asc&limit=2000`;
+
+  let events = [];
+  try {
+    const replayPayload = await api(replayPath);
+    events = replayPayload?.data?.events || [];
+  } catch {
+    const timelinePayload = await api(timelinePath);
+    events = timelinePayload?.data?.events || [];
+  }
+
+  projectWorldFromEvents(events);
+}
+
 async function refreshRuntimeChats() {
   const path =
-    `/api/runtime/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `/v1/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
     `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
     `&types=conversation_message_posted&order=desc&limit=${RUNTIME.chatLimit}`;
   const payload = await api(path);
@@ -640,7 +846,7 @@ async function refreshRuntimeChats() {
 
 async function refreshRuntimeOrders() {
   const path =
-    `/api/runtime/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `/v1/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
     `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
     `&types=order_changed&order=desc&limit=50`;
   const payload = await api(path);
@@ -658,7 +864,7 @@ async function refreshRuntimeOrders() {
 
 async function refreshRuntimeInbox() {
   const path =
-    `/api/runtime/inbox?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `/v1/inbox?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
     `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
     `&unreadOnly=true&order=desc&limit=${RUNTIME.inboxLimit}`;
   const payload = await api(path);
@@ -668,7 +874,7 @@ async function refreshRuntimeInbox() {
 
 async function refreshRuntimePresence() {
   const path =
-    `/api/runtime/presence?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `/v1/presence?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
     `&roomId=${encodeURIComponent(RUNTIME.roomId)}&limit=${RUNTIME.presenceLimit}`;
   const payload = await api(path);
   runtimeState.presence = payload?.data?.presence || [];
@@ -677,7 +883,7 @@ async function refreshRuntimePresence() {
 
 async function refreshRuntimeTasks() {
   const path =
-    `/api/runtime/tasks?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `/v1/tasks?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
     `&roomId=${encodeURIComponent(RUNTIME.roomId)}&limit=${RUNTIME.taskLimit}`;
   const payload = await api(path);
   runtimeState.tasks = payload?.data?.tasks || [];
@@ -685,9 +891,7 @@ async function refreshRuntimeTasks() {
 }
 
 async function refreshRuntimeRooms() {
-  const path =
-    `/api/runtime/rooms?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
-    `&limit=${RUNTIME.roomLimit}`;
+  const path = `/v1/rooms?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&limit=${RUNTIME.roomLimit}`;
   const payload = await api(path);
   runtimeState.rooms = payload?.data?.rooms || [];
   renderRooms(runtimeState.rooms);
@@ -695,9 +899,7 @@ async function refreshRuntimeRooms() {
 }
 
 async function refreshRuntimeSessions() {
-  const path =
-    `/api/runtime/table-sessions?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
-    `&limit=${RUNTIME.sessionLimit}`;
+  const path = `/v1/table-sessions?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&limit=${RUNTIME.sessionLimit}`;
   const payload = await api(path);
   runtimeState.sessions = payload?.data?.sessions || [];
   renderSessions(runtimeState.sessions);
@@ -759,6 +961,11 @@ const refreshRuntimeSessionsDebounced = debounce(() => {
 function handleRuntimeEvent(data) {
   runtimeState.lastRuntimeEventAt = Date.now();
 
+  if (WORLD_EVENT_TYPES.has(data.type)) {
+    applyEventToWorld(runtimeState.worldActorsById, data);
+    applyWorldFromMap();
+  }
+
   if (data.type === "order_changed") {
     const order = toRuntimeOrder(data);
     if (order && !runtimeState.orderEventIds.has(order.eventId)) {
@@ -783,11 +990,7 @@ function handleRuntimeEvent(data) {
     return;
   }
 
-  if (
-    data.type === "mention_created" ||
-    data.type === "task_assigned" ||
-    data.type === "operator_override_applied"
-  ) {
+  if (data.type === "mention_created" || data.type === "task_assigned" || data.type === "operator_override_applied") {
     refreshRuntimeInboxDebounced();
   }
 
@@ -805,40 +1008,9 @@ function handleRuntimeEvent(data) {
   }
 }
 
-function connectWorldStream() {
-  const source = new EventSource("/api/stream");
-
-  source.addEventListener("ready", (event) => {
-    const data = parseStreamData(event);
-    if (data.snapshot) {
-      applyWorldState(data.snapshot);
-    }
-    runtimeState.worldConnected = true;
-    setStreamStatus("All agents are rendered live.");
-  });
-
-  source.addEventListener("state", (event) => {
-    const data = parseStreamData(event);
-    if (data.world && Array.isArray(data.actors)) {
-      applyWorldState(data);
-    }
-  });
-
-  source.addEventListener("heartbeat", () => {
-    setStreamStatus("All agents are rendered live.");
-  });
-
-  source.onerror = () => {
-    runtimeState.worldConnected = false;
-    setStreamStatus("World stream reconnecting...");
-  };
-
-  return source;
-}
-
 function connectRuntimeStream() {
   const source = new EventSource(
-    `/api/runtime/stream?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&roomId=${encodeURIComponent(RUNTIME.roomId)}`
+    `/v1/streams/market-events?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&roomId=${encodeURIComponent(RUNTIME.roomId)}`
   );
 
   source.addEventListener("ready", () => {
@@ -863,6 +1035,8 @@ function connectRuntimeStream() {
     "operator_override_applied",
     "agent_entered",
     "agent_left",
+    "actor_moved",
+    "intent_completed",
     "status_changed",
     "presence_heartbeat",
     "room_created",
@@ -907,9 +1081,12 @@ async function focusRoom(roomIdInput) {
   }
   RUNTIME.roomId = nextRoomId;
   runtimeState.chatEventIds.clear();
+  runtimeState.orderEventIds.clear();
+  runtimeState.worldActorsById = new Map();
   setRuntimeStatus(`Switching runtime room to ${RUNTIME.roomId}...`);
   updateRoomModeText();
   await refreshRuntimePanels();
+  await refreshRuntimeWorld();
   reconnectRuntimeStream();
   setSessionFeedback(`Focused room ${RUNTIME.roomId}.`);
 }
@@ -923,13 +1100,21 @@ async function openPrivateTable() {
   if (!ownerActorId) {
     throw new Error("Owner actor is required");
   }
-  const invitedActorIds = parseCsvList(tableInvitesInput?.value || "").filter(
-    (actorId) => actorId !== ownerActorId
-  );
+  const invitedActorIds = parseCsvList(tableInvitesInput?.value || "").filter((actorId) => actorId !== ownerActorId);
   const durationMinutes = clamp(Number(tableDurationInput?.value || 90), 5, 1440);
+  const planId =
+    durationMinutes <= 30
+      ? "espresso"
+      : durationMinutes <= 90
+        ? "cappuccino"
+        : durationMinutes <= 240
+          ? "americano"
+          : "decaf_night_shift";
+  const planPriceUsd = planId === "espresso" ? 3 : planId === "cappuccino" ? 6 : planId === "americano" ? 10 : 15;
+  const paymentAmountUsd = Math.max(Number(RUNTIME.privateTablePriceUsd || 0), planPriceUsd);
   const paymentProof = String(paymentProofInput?.value || "").trim() || "coffee_paid";
 
-  await api("/api/runtime/rooms", {
+  await api("/v1/rooms", {
     method: "POST",
     idempotencyKey: makeIdempotencyKey("room-upsert"),
     body: {
@@ -939,11 +1124,11 @@ async function openPrivateTable() {
       roomType: "private_table",
       ownerActorId,
       paymentProof,
-      paymentAmountUsd: RUNTIME.privateTablePriceUsd
+      paymentAmountUsd
     }
   });
 
-  const payload = await api("/api/runtime/table-sessions", {
+  const payload = await api("/v1/table-sessions", {
     method: "POST",
     idempotencyKey: makeIdempotencyKey("table-session"),
     body: {
@@ -951,10 +1136,10 @@ async function openPrivateTable() {
       actorId: ownerActorId,
       ownerActorId,
       roomId,
+      planId,
       invitedActorIds,
-      durationMinutes,
       paymentProof,
-      paymentAmountUsd: RUNTIME.privateTablePriceUsd
+      paymentAmountUsd
     }
   });
 
@@ -968,7 +1153,7 @@ async function openPrivateTable() {
 
 async function exportTranscript() {
   const payload = await api(
-    `/api/runtime/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
+    `/v1/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
       `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
       `&order=desc&limit=${RUNTIME.timelineExportLimit}`
   );
@@ -1050,23 +1235,15 @@ async function boot() {
     tableRoomInput.value = `private-${Date.now().toString(36).slice(-6)}`;
   }
 
-  const [menuData, stateData, ordersData] = await Promise.all([
-    api("/api/menu"),
-    api("/api/state"),
-    api("/api/orders?limit=50")
-  ]);
-
-  renderMenu(menuData.menu || []);
-  applyWorldState(stateData);
-  renderOrders(ordersData.orders || []);
+  renderMenu(MENU);
 
   try {
     await refreshRuntimePanels();
+    await refreshRuntimeWorld();
   } catch (error) {
     setRuntimeStatus(error instanceof Error ? error.message : String(error));
   }
 
-  connectWorldStream();
   reconnectRuntimeStream();
 
   setInterval(() => {
@@ -1084,12 +1261,17 @@ async function boot() {
     }
     void refreshRuntimeChats().catch(() => {});
     void refreshRuntimeOrders().catch(() => {});
+    void refreshRuntimeWorld().catch(() => {});
   }, 30000);
 
   setInterval(() => {
     void refreshRuntimeRooms().catch(() => {});
     void refreshRuntimeSessions().catch(() => {});
   }, 30000);
+
+  setInterval(() => {
+    sweepWorldBubbles();
+  }, 1000);
 }
 
 boot().catch((error) => {

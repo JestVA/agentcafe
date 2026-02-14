@@ -96,7 +96,7 @@
 - inbox from `/v1/inbox`
 - tasks/handoffs from `/v1/tasks`
 - presence from `/v1/presence*`
-- Legacy `/api/chats` and `/api/view` remain compatibility-only during migration window.
+- Legacy world routes are removed; `/v1/*` is the canonical collaboration contract.
 
 ### Push transport
 - SSE remains canonical stream and replay source.

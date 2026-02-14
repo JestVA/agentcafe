@@ -83,7 +83,7 @@ const plugin = {
   name: "captainclaw",
   version: "0.2.0",
   description:
-    "CaptainClaw tools for AgentCafe world + runtime API (intents, conversation, presence, tasks, objects, automation).",
+    "CaptainClaw tools for AgentCafe canonical runtime API (intents, conversation, presence, tasks, objects, automation).",
   async init(api, config = {}) {
     const worldUrl = config.worldUrl || DEFAULT_WORLD_URL;
     const runtimeUrl = config.runtimeUrl || DEFAULT_RUNTIME_URL;
@@ -114,8 +114,8 @@ const plugin = {
     };
 
     const ensureActor = async (input = {}) => {
-      const data = withActor(input);
-      await client.enterCafe({ actorId: data.actorId });
+      const data = withRuntimeContext(input, { includeActor: true });
+      await client.enterCafe(data);
       return data;
     };
 
@@ -195,7 +195,7 @@ const plugin = {
         additionalProperties: false
       },
       execute: async (input = {}) => {
-        const response = await client.leaveCafe(withActor(input));
+        const response = await client.leaveCafe(withRuntimeContext(input, { includeActor: true }));
         return toolResult("Actor left the cafe.", response);
       }
     });
@@ -521,6 +521,7 @@ const plugin = {
           tenantId: { type: "string" },
           roomId: { type: "string" },
           ownerActorId: { type: "string" },
+          planId: { type: "string" },
           invitedActorIds: { type: "array", items: { type: "string" } },
           displayName: { type: "string" },
           startedAt: { type: "string" },
@@ -538,6 +539,7 @@ const plugin = {
           ...withRuntimeContext(input, { includeActor: true }),
           roomId: maybeString(input.roomId, null),
           ownerActorId: maybeString(input.ownerActorId, null),
+          planId: maybeString(input.planId, "cappuccino"),
           invitedActorIds: maybeArray(input.invitedActorIds),
           displayName: maybeString(input.displayName, null),
           startedAt: maybeString(input.startedAt, null),
@@ -950,10 +952,10 @@ const plugin = {
       try {
         api.registerCommand({
           name: "cafe",
-          description: "Show menu plus world/runtime endpoints for CaptainClaw.",
+          description: "Show menu plus canonical runtime endpoint info for CaptainClaw.",
           execute: async () => {
             const menu = await client.requestMenu();
-            return `${buildCommandText(menu.menu)}\nWorld: ${worldUrl}\nRuntime: ${runtimeUrl}`;
+            return `${buildCommandText(menu.menu)}\nCanonical runtime: ${runtimeUrl}\nUI host: ${worldUrl}`;
           }
         });
       } catch {

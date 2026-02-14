@@ -21,6 +21,7 @@ export const ERROR_CODES = {
   },
   ERR_RATE_LIMITED: { status: 429, message: "Rate limit exceeded" },
   ERR_FORBIDDEN: { status: 403, message: "Forbidden" },
+  ERR_PLAN_FEATURE_DISABLED: { status: 403, message: "Plan feature disabled" },
   ERR_OPERATOR_OVERRIDE_BLOCKED: { status: 423, message: "Blocked by operator override" },
   ERR_MODERATION_BLOCKED: { status: 429, message: "Moderation policy blocked action" },
   ERR_UNSUPPORTED_ACTION: { status: 404, message: "Unsupported action" },

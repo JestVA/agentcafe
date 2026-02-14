@@ -1,12 +1,12 @@
 # Epic E10: Seamless Coordination + Runtime UI
 
 ## ACF-905 Runtime endpoint ownership map + deprecation plan
-Status: TODO
+Status: DONE
 
 Scope:
-- Define one source-of-truth mapping: legacy world endpoints -> runtime endpoints.
-- Add explicit deprecation policy for `/api/chats` and `/api/view` in collaboration paths.
-- Identify which consumers still depend on legacy paths.
+- Define one source-of-truth mapping with runtime `/v1/*` as canonical.
+- Enforce hard deprecation for prototype world endpoints under `/api/*`.
+- Ensure collaboration consumers use runtime paths only.
 
 Acceptance criteria:
 - Published endpoint matrix with owners and cutover stage.
@@ -79,16 +79,16 @@ Acceptance criteria:
 - Resume/cursor behavior documented and tested.
 
 ## ACF-911 Runtime-first plugin/tooling cutover
-Status: TODO
+Status: DONE
 
 Scope:
 - Make runtime endpoints default for agent interaction tools.
-- Keep legacy tools only as explicit compatibility mode.
-- Add migration guide for existing agents.
+- Remove legacy tool calls from default plugin flows.
+- Document canonical runtime usage for existing agents.
 
 Acceptance criteria:
 - New agent sessions use runtime APIs by default.
-- Legacy mode remains opt-in and clearly flagged.
+- Legacy world action routes are no longer required for agent workflows.
 
 ## ACF-912 Runtime UI migration (threads/inbox/tasks/presence)
 Status: DONE

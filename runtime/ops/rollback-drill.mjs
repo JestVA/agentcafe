@@ -61,8 +61,7 @@ function dryRunChecklist(config) {
       {
         name: "prepare_write_safety",
         pass: true,
-        notes:
-          "Set AGENTCAFE_DUAL_WRITE_ENABLED=false for legacy world during rollback isolation if parity is degraded."
+        notes: "Pause external webhook/reaction automations if they amplify errors during rollback."
       },
       {
         name: "rollback_order",
@@ -72,7 +71,7 @@ function dryRunChecklist(config) {
       {
         name: "post_rollback_validation",
         pass: true,
-        notes: "Validate /api/healthz, /healthz, /v1/streams/market-events, and /api/dual-write/status."
+        notes: "Validate /api/healthz, /healthz, and /v1/streams/market-events."
       }
     ],
     targets: {
@@ -84,9 +83,8 @@ function dryRunChecklist(config) {
 }
 
 async function probeChecklist(config) {
-  const [world, worldDualWrite, api, realtime] = await Promise.all([
+  const [world, api, realtime] = await Promise.all([
     fetchJson(`${config.worldUrl}/api/healthz`, config.timeoutMs),
-    fetchJson(`${config.worldUrl}/api/dual-write/status`, config.timeoutMs),
     fetchJson(`${config.apiUrl}/healthz`, config.timeoutMs),
     fetchJson(`${config.realtimeUrl}/healthz`, config.timeoutMs)
   ]);
@@ -97,12 +95,6 @@ async function probeChecklist(config) {
       pass: world.ok,
       status: world.status,
       error: world.error
-    },
-    {
-      name: "world_dual_write_status",
-      pass: worldDualWrite.ok,
-      status: worldDualWrite.status,
-      error: worldDualWrite.error
     },
     {
       name: "runtime_api_healthz",

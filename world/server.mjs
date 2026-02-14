@@ -1,21 +1,7 @@
 import http from "node:http";
-import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  requestMenu,
-  enterCafe,
-  moveActor,
-  say,
-  orderCoffee,
-  getCurrentOrder,
-  getRecentOrders,
-  getRecentChats,
-  leaveCafe,
-  getState,
-  sweepExpiredState
-} from "./state.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,24 +9,12 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 
 const HOST = process.env.AGENTCAFE_HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || process.env.AGENTCAFE_PORT || 3846);
-const STREAM_HEARTBEAT_MS = Number(process.env.AGENTCAFE_STREAM_HEARTBEAT_MS || 15000);
-const STREAM_MAX_CLIENTS = Math.max(1, Number(process.env.AGENTCAFE_STREAM_MAX_CLIENTS || 250));
-const SWEEP_INTERVAL_MS = Number(process.env.AGENTCAFE_SWEEP_INTERVAL_MS || 1000);
 const WORLD_API_KEY = String(process.env.AGENTCAFE_WORLD_API_KEY || "").trim();
-const WORLD_API_AUTH_QUERY_PARAM = String(process.env.AGENTCAFE_WORLD_API_AUTH_QUERY_PARAM || "apiKey").trim() || "apiKey";
-const DUAL_WRITE_ENABLED = String(process.env.AGENTCAFE_DUAL_WRITE_ENABLED || "false").toLowerCase() === "true";
-const DUAL_WRITE_RUNTIME_API_URL = String(
-  process.env.AGENTCAFE_RUNTIME_API_URL || "http://127.0.0.1:3850"
-).replace(/\/$/, "");
+const WORLD_API_AUTH_QUERY_PARAM =
+  String(process.env.AGENTCAFE_WORLD_API_AUTH_QUERY_PARAM || "apiKey").trim() || "apiKey";
+const RUNTIME_API_URL = String(process.env.AGENTCAFE_RUNTIME_API_URL || "http://127.0.0.1:3850").replace(/\/$/, "");
 const RUNTIME_API_KEY = String(process.env.AGENTCAFE_RUNTIME_API_KEY || "").trim();
-const DUAL_WRITE_TIMEOUT_MS = Math.max(250, Number(process.env.AGENTCAFE_DUAL_WRITE_TIMEOUT_MS || 3000));
 const RUNTIME_PROXY_TIMEOUT_MS = Math.max(250, Number(process.env.AGENTCAFE_RUNTIME_PROXY_TIMEOUT_MS || 6000));
-const DUAL_WRITE_HISTORY_LIMIT = Math.max(
-  10,
-  Math.min(Number(process.env.AGENTCAFE_DUAL_WRITE_HISTORY_LIMIT || 200), 2000)
-);
-const DUAL_WRITE_TENANT_ID = process.env.AGENTCAFE_DUAL_WRITE_TENANT_ID || "default";
-const DUAL_WRITE_ROOM_ID = process.env.AGENTCAFE_DUAL_WRITE_ROOM_ID || "main";
 
 const STATIC_FILES = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -48,24 +22,21 @@ const STATIC_FILES = new Map([
   ["/app.js", { file: "app.js", type: "text/javascript; charset=utf-8" }],
   ["/styles.css", { file: "styles.css", type: "text/css; charset=utf-8" }]
 ]);
-const streamClients = new Set();
-let streamSequence = 0;
-const dualWriteMetrics = {
-  enabled: DUAL_WRITE_ENABLED,
-  targetUrl: DUAL_WRITE_RUNTIME_API_URL,
-  tenantId: DUAL_WRITE_TENANT_ID,
-  roomId: DUAL_WRITE_ROOM_ID,
-  startedAt: new Date().toISOString(),
-  attempted: 0,
-  runtimeSucceeded: 0,
-  runtimeFailed: 0,
-  divergenceCount: 0,
-  lastAttemptAt: null,
-  lastSuccessAt: null,
-  lastFailureAt: null,
-  lastError: null,
-  recent: []
-};
+
+const LEGACY_PATHS = new Set([
+  "/api/menu",
+  "/api/view",
+  "/api/state",
+  "/api/orders",
+  "/api/chats",
+  "/api/stream",
+  "/api/dual-write/status",
+  "/api/enter",
+  "/api/move",
+  "/api/say",
+  "/api/order",
+  "/api/leave"
+]);
 
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -75,10 +46,13 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function sendError(res, statusCode, message) {
+function sendError(res, statusCode, message, details = {}) {
   sendJson(res, statusCode, {
     ok: false,
-    error: message
+    error: {
+      message,
+      ...details
+    }
   });
 }
 
@@ -91,8 +65,7 @@ function readProvidedApiKey(req, url) {
   if (/^bearer\s+/i.test(authHeader)) {
     return authHeader.replace(/^bearer\s+/i, "").trim();
   }
-  const queryValue = String(url.searchParams.get(WORLD_API_AUTH_QUERY_PARAM) || url.searchParams.get("token") || "").trim();
-  return queryValue;
+  return String(url.searchParams.get(WORLD_API_AUTH_QUERY_PARAM) || url.searchParams.get("token") || "").trim();
 }
 
 function requireWorldAuth(req, res, url) {
@@ -115,211 +88,8 @@ function runtimeAuthHeader() {
   };
 }
 
-function baseActorId(value) {
-  const actorId = String(value || "").trim();
-  return actorId || "agent";
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
-function moderationRetryDelayMs(errorPayload) {
-  if (!errorPayload || typeof errorPayload !== "object") {
-    return null;
-  }
-  if (errorPayload.code !== "ERR_MODERATION_BLOCKED") {
-    return null;
-  }
-  const details = errorPayload.details || {};
-  if (details.reasonCode !== "MOD_MIN_INTERVAL") {
-    return null;
-  }
-  const retryAfterMs = Number(details.retryAfterMs);
-  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
-    return retryAfterMs;
-  }
-  const minIntervalMs = Number(details.minIntervalMs);
-  if (Number.isFinite(minIntervalMs) && minIntervalMs > 0) {
-    return minIntervalMs;
-  }
-  return null;
-}
-
-function appendDualWriteMetric(entry) {
-  dualWriteMetrics.recent.unshift(entry);
-  if (dualWriteMetrics.recent.length > DUAL_WRITE_HISTORY_LIMIT) {
-    dualWriteMetrics.recent.length = DUAL_WRITE_HISTORY_LIMIT;
-  }
-}
-
-function mapDualWriteRequest(action, input = {}) {
-  const actorId = baseActorId(input.actorId);
-  const payloadBase = {
-    tenantId: DUAL_WRITE_TENANT_ID,
-    roomId: DUAL_WRITE_ROOM_ID,
-    actorId
-  };
-
-  if (action === "enter") {
-    return {
-      path: "/v1/commands/enter",
-      payload: payloadBase
-    };
-  }
-  if (action === "leave") {
-    return {
-      path: "/v1/commands/leave",
-      payload: payloadBase
-    };
-  }
-  if (action === "move") {
-    return {
-      path: "/v1/commands/move",
-      payload: {
-        ...payloadBase,
-        direction: input.direction,
-        steps: input.steps
-      }
-    };
-  }
-  if (action === "say") {
-    return {
-      path: "/v1/conversations/messages",
-      payload: {
-        ...payloadBase,
-        text: input.text,
-        ttlMs: input.ttlMs
-      }
-    };
-  }
-  if (action === "order") {
-    return {
-      path: "/v1/commands/order",
-      payload: {
-        ...payloadBase,
-        itemId: input.itemId,
-        size: input.size
-      }
-    };
-  }
-
-  return null;
-}
-
-async function replicateRuntimeWrite(action, input = {}) {
-  if (!DUAL_WRITE_ENABLED) {
-    return;
-  }
-
-  const mapping = mapDualWriteRequest(action, input);
-  if (!mapping) {
-    return;
-  }
-
-  const startedAt = Date.now();
-  dualWriteMetrics.attempted += 1;
-  dualWriteMetrics.lastAttemptAt = new Date(startedAt).toISOString();
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, DUAL_WRITE_TIMEOUT_MS);
-
-  let entry = {
-    ts: new Date().toISOString(),
-    action,
-    path: mapping.path,
-    actorId: baseActorId(input.actorId),
-    success: false,
-    statusCode: null,
-    latencyMs: null,
-    error: null
-  };
-
-  try {
-    let attempt = 0;
-    let retries = 0;
-    let success = false;
-    let statusCode = null;
-    let errorDetail = null;
-
-    while (attempt < 2 && !success) {
-      const response = await fetch(`${DUAL_WRITE_RUNTIME_API_URL}${mapping.path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "idempotency-key": `dw-${action}-${Date.now()}-${randomUUID()}`,
-          ...runtimeAuthHeader()
-        },
-        body: JSON.stringify(mapping.payload),
-        signal: controller.signal
-      });
-      let body = null;
-      try {
-        body = await response.json();
-      } catch {
-        body = null;
-      }
-      success = response.ok && (!body || body.ok !== false);
-      statusCode = response.status;
-      errorDetail = success ? null : body?.error || `HTTP ${response.status}`;
-
-      if (success) {
-        break;
-      }
-
-      const delayMs = moderationRetryDelayMs(body?.error);
-      if (attempt === 0 && delayMs != null) {
-        retries += 1;
-        await sleep(Math.max(25, Math.min(delayMs, 2000)));
-        attempt += 1;
-        continue;
-      }
-      break;
-    }
-
-    const finishedAt = Date.now();
-    entry = {
-      ...entry,
-      success,
-      statusCode,
-      latencyMs: finishedAt - startedAt,
-      retries,
-      error: errorDetail
-    };
-
-    if (success) {
-      dualWriteMetrics.runtimeSucceeded += 1;
-      dualWriteMetrics.lastSuccessAt = new Date(finishedAt).toISOString();
-    } else {
-      dualWriteMetrics.runtimeFailed += 1;
-      dualWriteMetrics.divergenceCount += 1;
-      dualWriteMetrics.lastFailureAt = new Date(finishedAt).toISOString();
-      dualWriteMetrics.lastError = entry.error;
-    }
-  } catch (error) {
-    const finishedAt = Date.now();
-    entry = {
-      ...entry,
-      success: false,
-      latencyMs: finishedAt - startedAt,
-      error: error instanceof Error ? error.message : String(error)
-    };
-    dualWriteMetrics.runtimeFailed += 1;
-    dualWriteMetrics.divergenceCount += 1;
-    dualWriteMetrics.lastFailureAt = new Date(finishedAt).toISOString();
-    dualWriteMetrics.lastError = entry.error;
-  } finally {
-    clearTimeout(timeout);
-    appendDualWriteMetric(entry);
-  }
-}
-
 function runtimeProxyPath(pathname, searchParams) {
-  const target = new URL(`${DUAL_WRITE_RUNTIME_API_URL}${pathname}`);
+  const target = new URL(`${RUNTIME_API_URL}${pathname}`);
   for (const [key, value] of searchParams.entries()) {
     target.searchParams.set(key, value);
   }
@@ -335,6 +105,28 @@ function proxyRequestHeaders(req, allowList = []) {
     }
   }
   return out;
+}
+
+async function readBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  if (chunks.length === 0) {
+    return {};
+  }
+
+  const raw = Buffer.concat(chunks).toString("utf8").trim();
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`invalid JSON body: ${reason}`);
+  }
 }
 
 async function proxyRuntimeJson(req, res, url, runtimePathname) {
@@ -361,7 +153,7 @@ async function proxyRuntimeJson(req, res, url, runtimePathname) {
       signal: controller.signal
     };
 
-    if (req.method !== "GET") {
+    if (req.method !== "GET" && req.method !== "HEAD") {
       const body = await readBody(req);
       init.headers["content-type"] = "application/json";
       init.body = JSON.stringify(body || {});
@@ -375,7 +167,9 @@ async function proxyRuntimeJson(req, res, url, runtimePathname) {
     } catch {
       payload = {
         ok: false,
-        error: `invalid JSON response from runtime (${upstreamRes.status})`
+        error: {
+          message: `invalid JSON response from runtime (${upstreamRes.status})`
+        }
       };
     }
 
@@ -436,87 +230,8 @@ async function proxyRuntimeSse(req, res, url, runtimePathname = "/v1/streams/mar
       return sendError(res, 502, error instanceof Error ? error.message : String(error));
     }
     if (!res.writableEnded) {
-      writeSse(res, {
-        event: "error",
-        data: {
-          error: error instanceof Error ? error.message : String(error)
-        }
-      });
       res.end();
     }
-  }
-}
-
-function buildViewState() {
-  const state = getState();
-  const orders = getRecentOrders({ limit: 50 });
-  const chats = getRecentChats({ limit: 100 });
-  return {
-    ok: true,
-    world: state.world,
-    actors: state.actors,
-    orders: orders.orders || [],
-    chats: chats.chats || []
-  };
-}
-
-function writeSse(res, { event, data, id }) {
-  if (id != null) {
-    res.write(`id: ${id}\n`);
-  }
-  if (event) {
-    res.write(`event: ${event}\n`);
-  }
-  res.write(`data: ${JSON.stringify(data || {})}\n\n`);
-}
-
-function removeStreamClient(client) {
-  if (!client) {
-    return;
-  }
-  streamClients.delete(client);
-}
-
-function broadcastEvent(event, data) {
-  if (streamClients.size === 0) {
-    return;
-  }
-  const id = ++streamSequence;
-  for (const client of streamClients) {
-    try {
-      writeSse(client.res, { id, event, data });
-    } catch {
-      removeStreamClient(client);
-    }
-  }
-}
-
-function broadcastState(reason) {
-  broadcastEvent("state", {
-    reason,
-    ...buildViewState()
-  });
-}
-
-async function readBody(req) {
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-  if (chunks.length === 0) {
-    return {};
-  }
-
-  const raw = Buffer.concat(chunks).toString("utf8").trim();
-  if (!raw) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(raw);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`invalid JSON body: ${reason}`);
   }
 }
 
@@ -536,231 +251,11 @@ async function serveStatic(res, pathname) {
   return true;
 }
 
-async function handleApi(req, res, url) {
-  if (req.method === "GET" && url.pathname === "/api/healthz") {
-    return sendJson(res, 200, { ok: true, service: "agentcafe-world" });
+function legacyApiRoute(pathname) {
+  if (LEGACY_PATHS.has(pathname)) {
+    return true;
   }
-
-  if (!requireWorldAuth(req, res, url)) {
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/stream") {
-    return proxyRuntimeSse(req, res, url, "/v1/streams/market-events");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/healthz") {
-    return proxyRuntimeJson(req, res, url, "/healthz");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/inbox") {
-    return proxyRuntimeJson(req, res, url, "/v1/inbox");
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/runtime/inbox/ack") {
-    return proxyRuntimeJson(req, res, url, "/v1/inbox/ack");
-  }
-
-  const runtimeInboxAckMatch = url.pathname.match(/^\/api\/runtime\/inbox\/([^/]+)\/ack$/);
-  if (req.method === "POST" && runtimeInboxAckMatch) {
-    return proxyRuntimeJson(req, res, url, `/v1/inbox/${encodeURIComponent(runtimeInboxAckMatch[1])}/ack`);
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/timeline") {
-    return proxyRuntimeJson(req, res, url, "/v1/timeline");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/presence") {
-    return proxyRuntimeJson(req, res, url, "/v1/presence");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/tasks") {
-    return proxyRuntimeJson(req, res, url, "/v1/tasks");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/rooms") {
-    return proxyRuntimeJson(req, res, url, "/v1/rooms");
-  }
-
-  const runtimeRoomMatch = url.pathname.match(/^\/api\/runtime\/rooms\/([^/]+)$/);
-  if (req.method === "GET" && runtimeRoomMatch) {
-    return proxyRuntimeJson(req, res, url, `/v1/rooms/${encodeURIComponent(runtimeRoomMatch[1])}`);
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/runtime/rooms") {
-    return proxyRuntimeJson(req, res, url, "/v1/rooms");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/table-sessions") {
-    return proxyRuntimeJson(req, res, url, "/v1/table-sessions");
-  }
-
-  const runtimeTableSessionMatch = url.pathname.match(/^\/api\/runtime\/table-sessions\/([^/]+)$/);
-  if (req.method === "GET" && runtimeTableSessionMatch) {
-    return proxyRuntimeJson(
-      req,
-      res,
-      url,
-      `/v1/table-sessions/${encodeURIComponent(runtimeTableSessionMatch[1])}`
-    );
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/runtime/table-sessions") {
-    return proxyRuntimeJson(req, res, url, "/v1/table-sessions");
-  }
-
-  if (req.method === "PATCH" && runtimeTableSessionMatch) {
-    return proxyRuntimeJson(
-      req,
-      res,
-      url,
-      `/v1/table-sessions/${encodeURIComponent(runtimeTableSessionMatch[1])}`
-    );
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/events") {
-    return proxyRuntimeJson(req, res, url, "/v1/events");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/mentions") {
-    return proxyRuntimeJson(req, res, url, "/v1/mentions");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/runtime/replay") {
-    return proxyRuntimeJson(req, res, url, "/v1/replay");
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/stream") {
-    if (streamClients.size >= STREAM_MAX_CLIENTS) {
-      return sendError(res, 503, `stream client limit reached (${STREAM_MAX_CLIENTS})`);
-    }
-    res.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-cache",
-      connection: "keep-alive"
-    });
-
-    const client = { res };
-    streamClients.add(client);
-
-    writeSse(res, {
-      id: ++streamSequence,
-      event: "ready",
-      data: {
-        ok: true,
-        heartbeatMs: STREAM_HEARTBEAT_MS,
-        snapshot: buildViewState()
-      }
-    });
-
-    req.on("close", () => {
-      removeStreamClient(client);
-    });
-    return;
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/dual-write/status") {
-    const attempted = dualWriteMetrics.attempted;
-    const runtimeParityRate = attempted > 0 ? dualWriteMetrics.runtimeSucceeded / attempted : null;
-    return sendJson(res, 200, {
-      ok: true,
-      data: {
-        ...dualWriteMetrics,
-        runtimeParityRate
-      }
-    });
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/menu") {
-    return sendJson(res, 200, requestMenu());
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/view") {
-    return sendJson(res, 200, buildViewState());
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/state") {
-    const sweep = sweepExpiredState();
-    if (sweep.changed) {
-      broadcastState("expiry");
-    }
-    return sendJson(
-      res,
-      200,
-      getState({ actorId: url.searchParams.get("actorId") || undefined })
-    );
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/order") {
-    return sendJson(
-      res,
-      200,
-      getCurrentOrder({ actorId: url.searchParams.get("actorId") || undefined })
-    );
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/orders") {
-    return sendJson(
-      res,
-      200,
-      getRecentOrders({ limit: url.searchParams.get("limit") || undefined })
-    );
-  }
-
-  if (req.method === "GET" && url.pathname === "/api/chats") {
-    return sendJson(
-      res,
-      200,
-      getRecentChats({ limit: url.searchParams.get("limit") || undefined })
-    );
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/enter") {
-    const body = await readBody(req);
-    const response = enterCafe(body);
-    sendJson(res, 200, response);
-    broadcastState("enter");
-    void replicateRuntimeWrite("enter", body);
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/move") {
-    const body = await readBody(req);
-    const response = moveActor(body);
-    sendJson(res, 200, response);
-    broadcastState("move");
-    void replicateRuntimeWrite("move", body);
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/say") {
-    const body = await readBody(req);
-    const response = say(body);
-    sendJson(res, 200, response);
-    broadcastState("say");
-    void replicateRuntimeWrite("say", body);
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/order") {
-    const body = await readBody(req);
-    const response = orderCoffee(body);
-    sendJson(res, 200, response);
-    broadcastState("order");
-    void replicateRuntimeWrite("order", body);
-    return;
-  }
-
-  if (req.method === "POST" && url.pathname === "/api/leave") {
-    const body = await readBody(req);
-    const response = leaveCafe(body);
-    sendJson(res, 200, response);
-    broadcastState("leave");
-    void replicateRuntimeWrite("leave", body);
-    return;
-  }
-
-  sendError(res, 404, "route not found");
+  return pathname.startsWith("/api/runtime/");
 }
 
 function isRuntimeDirectPath(pathname) {
@@ -769,6 +264,30 @@ function isRuntimeDirectPath(pathname) {
 
 function isRuntimeDirectSsePath(pathname) {
   return pathname === "/v1/streams/market-events" || pathname === "/v1/events/stream";
+}
+
+async function handleApi(req, res, url) {
+  if (req.method === "GET" && url.pathname === "/api/healthz") {
+    return sendJson(res, 200, {
+      ok: true,
+      service: "agentcafe-world",
+      mode: "runtime-proxy",
+      canonicalApi: "/v1/*"
+    });
+  }
+
+  if (!requireWorldAuth(req, res, url)) {
+    return;
+  }
+
+  if (legacyApiRoute(url.pathname)) {
+    return sendError(res, 410, "legacy api removed; use canonical runtime routes under /v1/*", {
+      code: "ERR_LEGACY_API_REMOVED",
+      canonicalBasePath: "/v1"
+    });
+  }
+
+  return sendError(res, 404, "route not found");
 }
 
 const server = http.createServer(async (req, res) => {
@@ -803,31 +322,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const sweepHandle = setInterval(() => {
-  const sweep = sweepExpiredState();
-  if (sweep.changed) {
-    broadcastState("expiry");
-  }
-}, SWEEP_INTERVAL_MS);
-
-const heartbeatHandle = setInterval(() => {
-  broadcastEvent("heartbeat", { ts: Date.now() });
-}, STREAM_HEARTBEAT_MS);
-
-server.on("close", () => {
-  clearInterval(sweepHandle);
-  clearInterval(heartbeatHandle);
-});
-
 server.listen(PORT, HOST, () => {
   process.stdout.write(`AgentCafe world listening on http://${HOST}:${PORT}\n`);
   if (WORLD_API_KEY) {
     process.stdout.write(`AgentCafe world API auth enabled (query=${WORLD_API_AUTH_QUERY_PARAM})\n`);
-  }
-  if (DUAL_WRITE_ENABLED) {
-    process.stdout.write(
-      `AgentCafe dual-write enabled -> ${DUAL_WRITE_RUNTIME_API_URL} (tenant=${DUAL_WRITE_TENANT_ID}, room=${DUAL_WRITE_ROOM_ID})\n`
-    );
   }
   if (RUNTIME_API_KEY) {
     process.stdout.write("AgentCafe runtime proxy auth enabled\n");

@@ -94,6 +94,12 @@ const PRIVATE_TABLE_DEFAULT_SESSION_MINUTES = Math.max(
   5,
   Number(process.env.PRIVATE_TABLE_DEFAULT_SESSION_MINUTES || 90)
 );
+const TABLE_SESSION_SWEEP_MS = Math.max(1000, Number(process.env.TABLE_SESSION_SWEEP_MS || 5000));
+const TABLE_PLAN_DEFAULT_ID_RAW = String(process.env.TABLE_PLAN_DEFAULT_ID || "cappuccino")
+  .trim()
+  .toLowerCase();
+const TABLE_PLAN_CATALOG = parseTablePlanCatalog(process.env.TABLE_PLAN_CATALOG_JSON);
+const TABLE_PLAN_DEFAULT_ID = resolveDefaultTablePlanId(TABLE_PLAN_CATALOG, TABLE_PLAN_DEFAULT_ID_RAW);
 
 const pgPool = await createPostgresPool();
 if (pgPool && API_DB_AUTO_MIGRATE) {
@@ -300,6 +306,72 @@ const presenceSweepHandle = setInterval(() => {
   });
 }, PRESENCE_SWEEP_MS);
 presenceSweepHandle.unref?.();
+
+async function sweepExpiredTableSessions() {
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.parse(nowIso);
+  const sessions = await tableSessionStore.list({
+    status: "active",
+    limit: 1000
+  });
+  for (const session of sessions) {
+    if (!tableSessionExpired(session, nowMs)) {
+      continue;
+    }
+    const ended = await tableSessionStore.patch({
+      tenantId: session.tenantId,
+      sessionId: session.sessionId,
+      patch: {
+        status: "ended",
+        endedAt: nowIso
+      }
+    });
+    if (!ended) {
+      continue;
+    }
+    const updatedEvent = await eventStore.append(
+      createEvent({
+        tenantId: ended.tenantId,
+        roomId: ended.roomId,
+        actorId: ended.ownerActorId,
+        type: EVENT_TYPES.TABLE_SESSION_UPDATED,
+        payload: {
+          sessionId: ended.sessionId,
+          status: ended.status,
+          planId: ended.planId,
+          invitedActorIds: ended.invitedActorIds,
+          startedAt: ended.startedAt,
+          expiresAt: ended.expiresAt,
+          endedAt: ended.endedAt,
+          metadata: ended.metadata,
+          changedFields: ["status", "endedAt"]
+        }
+      })
+    );
+    await eventStore.append(
+      createEvent({
+        tenantId: ended.tenantId,
+        roomId: ended.roomId,
+        actorId: ended.ownerActorId,
+        type: EVENT_TYPES.TABLE_SESSION_ENDED,
+        payload: {
+          sessionId: ended.sessionId,
+          endedAt: ended.endedAt,
+          ownerActorId: ended.ownerActorId,
+          reason: "expired"
+        },
+        causationId: updatedEvent.eventId
+      })
+    );
+  }
+}
+
+const tableSessionSweepHandle = setInterval(() => {
+  sweepExpiredTableSessions().catch(() => {
+    // keep server alive even if sweeper fails
+  });
+}, TABLE_SESSION_SWEEP_MS);
+tableSessionSweepHandle.unref?.();
 
 const COMMAND_ROUTES = new Map([
   ["/v1/commands/enter", { type: EVENT_TYPES.ENTER, action: "enter" }],
@@ -741,6 +813,299 @@ function parseDurationMinutes(value, { field = "durationMinutes", fallback = PRI
     });
   }
   return rounded;
+}
+
+function defaultTablePlanCatalog() {
+  return {
+    espresso: {
+      planId: "espresso",
+      maxAgents: 2,
+      durationMinutes: 30,
+      features: ["basic_thread_chat"],
+      price: 3
+    },
+    cappuccino: {
+      planId: "cappuccino",
+      maxAgents: 4,
+      durationMinutes: 90,
+      features: ["basic_thread_chat", "task_board", "shared_objects"],
+      price: 6
+    },
+    americano: {
+      planId: "americano",
+      maxAgents: 8,
+      durationMinutes: 240,
+      features: ["basic_thread_chat", "task_board", "shared_objects", "replay", "event_subscriptions", "export"],
+      price: 10
+    },
+    decaf_night_shift: {
+      planId: "decaf_night_shift",
+      maxAgents: 8,
+      durationMinutes: 720,
+      features: ["basic_thread_chat", "task_board", "shared_objects", "replay", "event_subscriptions", "export"],
+      price: 15
+    }
+  };
+}
+
+function normalizeFeatureList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const out = [];
+  const seen = new Set();
+  for (const item of value) {
+    const feature = String(item || "").trim().toLowerCase();
+    if (!feature || seen.has(feature)) {
+      continue;
+    }
+    seen.add(feature);
+    out.push(feature);
+  }
+  return out;
+}
+
+function normalizePlanId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_");
+}
+
+function normalizeTablePlan(id, raw) {
+  const planId = normalizePlanId(id);
+  const maxAgents = Math.max(1, Math.min(32, Math.round(Number(raw?.maxAgents || 1))));
+  const durationMinutes = Math.max(5, Math.min(1440, Math.round(Number(raw?.durationMinutes || 30))));
+  const features = normalizeFeatureList(raw?.features);
+  const price = Math.max(0, Math.round(Number(raw?.price || 0) * 100) / 100);
+  return {
+    planId,
+    maxAgents,
+    durationMinutes,
+    features,
+    price
+  };
+}
+
+function parseTablePlanCatalog(rawJson) {
+  const fallback = defaultTablePlanCatalog();
+  if (!rawJson) {
+    return fallback;
+  }
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return fallback;
+    }
+    const next = {};
+    for (const [id, rawPlan] of Object.entries(parsed)) {
+      const normalized = normalizeTablePlan(id, rawPlan);
+      if (!normalized.planId) {
+        continue;
+      }
+      next[normalized.planId] = normalized;
+    }
+    return Object.keys(next).length ? next : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function resolveDefaultTablePlanId(catalog, requestedId) {
+  const candidate = normalizePlanId(requestedId);
+  if (candidate && catalog[candidate]) {
+    return candidate;
+  }
+  if (catalog.cappuccino) {
+    return "cappuccino";
+  }
+  return Object.keys(catalog)[0] || "espresso";
+}
+
+function parseTablePlanId(value, { field = "planId" } = {}) {
+  const planId = normalizePlanId(value);
+  if (!planId) {
+    throw new AppError("ERR_MISSING_FIELD", `Missing required field: ${field}`, { field });
+  }
+  if (!TABLE_PLAN_CATALOG[planId]) {
+    throw new AppError("ERR_INVALID_ENUM", `${field} must reference a configured table plan`, {
+      field,
+      value,
+      allowed: Object.keys(TABLE_PLAN_CATALOG)
+    });
+  }
+  return planId;
+}
+
+function resolveTablePlan(planId) {
+  const normalized = normalizePlanId(planId);
+  return TABLE_PLAN_CATALOG[normalized] || TABLE_PLAN_CATALOG[TABLE_PLAN_DEFAULT_ID];
+}
+
+function tableSessionExpired(session, nowMs = Date.now()) {
+  const expiresMs = Date.parse(session?.expiresAt || "");
+  return Number.isFinite(expiresMs) && expiresMs <= nowMs;
+}
+
+function actorCanUseTableSession(session, actorId) {
+  if (!session || !actorId) {
+    return false;
+  }
+  if (session.ownerActorId === actorId) {
+    return true;
+  }
+  return Array.isArray(session.invitedActorIds) && session.invitedActorIds.includes(actorId);
+}
+
+async function resolveActiveTableSession({ tenantId, roomId, actorId, nowMs = Date.now() }) {
+  const sessions = await tableSessionStore.list({
+    tenantId,
+    roomId,
+    status: "active",
+    limit: 250
+  });
+  let firstNonExpired = null;
+  let firstExpired = null;
+  for (const session of sessions) {
+    if (tableSessionExpired(session, nowMs)) {
+      if (!firstExpired) {
+        firstExpired = session;
+      }
+      continue;
+    }
+    if (!firstNonExpired) {
+      firstNonExpired = session;
+    }
+    if (actorCanUseTableSession(session, actorId)) {
+      return {
+        session,
+        plan: resolveTablePlan(session.planId)
+      };
+    }
+  }
+  if (firstNonExpired) {
+    return {
+      session: firstNonExpired,
+      plan: resolveTablePlan(firstNonExpired.planId)
+    };
+  }
+  return {
+    session: null,
+    plan: null,
+    expiredSession: firstExpired
+  };
+}
+
+async function enforceTableSessionAccess({
+  tenantId,
+  roomId,
+  actorId,
+  action,
+  checkSeatCap = false,
+  requiredFeature = null
+}) {
+  const room = await roomStore.get({ tenantId, roomId });
+  if (!room || room.roomType !== "private_table") {
+    return null;
+  }
+
+  if (!actorId) {
+    throw new AppError("ERR_MISSING_FIELD", "Missing required field: actorId", {
+      field: "actorId",
+      roomId,
+      action
+    });
+  }
+
+  const nowMs = Date.now();
+  const resolved = await resolveActiveTableSession({
+    tenantId,
+    roomId,
+    actorId,
+    nowMs
+  });
+
+  if (!resolved.session) {
+    if (resolved.expiredSession) {
+      throw new AppError("ERR_FORBIDDEN", "Private table session has expired", {
+        tenantId,
+        roomId,
+        actorId,
+        action,
+        sessionId: resolved.expiredSession.sessionId,
+        expiredAt: resolved.expiredSession.expiresAt
+      }, 403);
+    }
+    throw new AppError("ERR_PAYMENT_REQUIRED", "No active private table session for this room", {
+      tenantId,
+      roomId,
+      actorId,
+      action
+    }, 402);
+  }
+
+  const { session, plan } = resolved;
+  if (tableSessionExpired(session, nowMs)) {
+    throw new AppError("ERR_FORBIDDEN", "Private table session has expired", {
+      tenantId,
+      roomId,
+      actorId,
+      action,
+      sessionId: session.sessionId,
+      expiredAt: session.expiresAt
+    }, 403);
+  }
+
+  if (!actorCanUseTableSession(session, actorId)) {
+    throw new AppError("ERR_FORBIDDEN", "Actor is not allowed in this private table session", {
+      tenantId,
+      roomId,
+      actorId,
+      action,
+      sessionId: session.sessionId
+    }, 403);
+  }
+
+  if (requiredFeature && !plan.features.includes(requiredFeature)) {
+    throw new AppError("ERR_PLAN_FEATURE_DISABLED", `Plan '${plan.planId}' does not include '${requiredFeature}'`, {
+      tenantId,
+      roomId,
+      actorId,
+      action,
+      sessionId: session.sessionId,
+      planId: plan.planId,
+      requiredFeature,
+      enabledFeatures: plan.features
+    }, 403);
+  }
+
+  if (checkSeatCap) {
+    const activePresence = await presenceStore.list({
+      tenantId,
+      roomId,
+      active: true,
+      limit: 1000
+    });
+    const activeActorIds = new Set(activePresence.map((row) => row.actorId).filter(Boolean));
+    if (!activeActorIds.has(actorId) && activeActorIds.size >= plan.maxAgents) {
+      throw new AppError("ERR_OUT_OF_BOUNDS", "Private table seat capacity reached", {
+        tenantId,
+        roomId,
+        actorId,
+        action,
+        sessionId: session.sessionId,
+        planId: plan.planId,
+        maxAgents: plan.maxAgents,
+        activeAgents: activeActorIds.size
+      });
+    }
+  }
+
+  return {
+    room,
+    session,
+    plan
+  };
 }
 
 async function verifyPrivateTablePayment({
@@ -1431,6 +1796,16 @@ async function handleCommand(req, res, url, requestId, rateHeaders) {
       });
     }
 
+    if (route.type !== EVENT_TYPES.LEAVE) {
+      await enforceTableSessionAccess({
+        tenantId,
+        roomId,
+        actorId,
+        action: route.action,
+        checkSeatCap: route.type === EVENT_TYPES.ENTER
+      });
+    }
+
     await enforceCapability({
       tenantId,
       roomId,
@@ -1601,6 +1976,13 @@ async function handleIntent(req, res, url, requestId, rateHeaders) {
         ...rateHeaders
       });
     }
+
+    await enforceTableSessionAccess({
+      tenantId,
+      roomId,
+      actorId,
+      action: `intent:${intent}`
+    });
 
     await enforceCapability({
       tenantId,
@@ -2328,6 +2710,14 @@ async function handleReplay(req, res, url, requestId, rateHeaders) {
   const now = Date.now();
   const fromTs = new Date(now - minutes * 60 * 1000).toISOString();
   const toTs = new Date(now).toISOString();
+
+  await enforceTableSessionAccess({
+    tenantId,
+    roomId,
+    actorId,
+    action: "replay",
+    requiredFeature: "replay"
+  });
 
   const events = await eventStore.list({
     tenantId,
@@ -3577,6 +3967,14 @@ async function handleRooms(req, res, url, requestId, rateHeaders) {
         });
       }
 
+      await enforceTableSessionAccess({
+        tenantId,
+        roomId,
+        actorId,
+        action: "task_create",
+        requiredFeature: "task_board"
+      });
+
       await enforceOperatorOverrides({
         tenantId,
         roomId,
@@ -3762,6 +4160,8 @@ async function handleTableSessions(req, res, url, requestId, rateHeaders) {
     const body = await readJson(req);
     const tenantId = optionalString(body, "tenantId", "default");
     const actorId = requireString(body, "actorId");
+    const planId = parseTablePlanId(body.planId, { field: "planId" });
+    const plan = resolveTablePlan(planId);
     const ownerActorId = optionalString(body, "ownerActorId", actorId);
     const roomId = optionalString(body, "roomId", `private-${randomUUID().slice(0, 8)}`);
     const displayName = optionalString(body, "displayName", null);
@@ -3771,16 +4171,21 @@ async function handleTableSessions(req, res, url, requestId, rateHeaders) {
     const paymentRef = optionalString(body, "paymentRef", null);
     const paymentAmountUsd = parseUsdAmount(body.paymentAmountUsd, {
       field: "paymentAmountUsd",
-      fallback: PRIVATE_TABLE_PRICE_USD
+      fallback: plan.price
     });
+    if (paymentAmountUsd < plan.price) {
+      throw new AppError("ERR_PAYMENT_REQUIRED", "paymentAmountUsd must be at least the selected plan price", {
+        field: "paymentAmountUsd",
+        value: paymentAmountUsd,
+        min: plan.price,
+        planId
+      }, 402);
+    }
     const startedAt = parseIsoInput(body.startedAt, {
       field: "startedAt",
       fallback: new Date().toISOString()
     });
-    const durationMinutes = parseDurationMinutes(body.durationMinutes, {
-      field: "durationMinutes",
-      fallback: PRIVATE_TABLE_DEFAULT_SESSION_MINUTES
-    });
+    const durationMinutes = plan.durationMinutes;
     const expiresAt = parseIsoInput(body.expiresAt, {
       field: "expiresAt",
       fallback: new Date(Date.parse(startedAt) + durationMinutes * 60 * 1000).toISOString()
@@ -3814,6 +4219,14 @@ async function handleTableSessions(req, res, url, requestId, rateHeaders) {
           ...rateHeaders
         });
       }
+
+      await enforceTableSessionAccess({
+        tenantId,
+        roomId,
+        actorId,
+        action: "object_create",
+        requiredFeature: "shared_objects"
+      });
 
       await enforceOperatorOverrides({
         tenantId,
@@ -3859,6 +4272,7 @@ async function handleTableSessions(req, res, url, requestId, rateHeaders) {
         tenantId,
         roomId: ensuredRoom.roomId,
         ownerActorId,
+        planId,
         invitedActorIds,
         status: "active",
         startedAt,
@@ -3879,6 +4293,7 @@ async function handleTableSessions(req, res, url, requestId, rateHeaders) {
             sessionId: session.sessionId,
             roomId: session.roomId,
             ownerActorId: session.ownerActorId,
+            planId: session.planId,
             invitedActorIds: session.invitedActorIds,
             status: session.status,
             startedAt: session.startedAt,
@@ -3974,6 +4389,14 @@ async function handleTableSessions(req, res, url, requestId, rateHeaders) {
         });
       }
 
+      await enforceTableSessionAccess({
+        tenantId,
+        roomId: existing.roomId,
+        actorId,
+        action: "task_update",
+        requiredFeature: "task_board"
+      });
+
       await enforceOperatorOverrides({
         tenantId,
         roomId: existing.roomId,
@@ -4030,6 +4453,7 @@ async function handleTableSessions(req, res, url, requestId, rateHeaders) {
           payload: {
             sessionId: session.sessionId,
             status: session.status,
+            planId: session.planId,
             invitedActorIds: session.invitedActorIds,
             startedAt: session.startedAt,
             expiresAt: session.expiresAt,
@@ -4623,6 +5047,14 @@ async function handleSharedObjects(req, res, url, requestId, rateHeaders) {
           ...rateHeaders
         });
       }
+
+      await enforceTableSessionAccess({
+        tenantId,
+        roomId: existing.roomId,
+        actorId,
+        action: "object_update",
+        requiredFeature: "shared_objects"
+      });
 
       await enforceOperatorOverrides({
         tenantId,
@@ -5324,6 +5756,15 @@ async function handleReactionSubscriptions(req, res, url, requestId, rateHeaders
     }
 
     const validated = validateReactionInput(body);
+    if (validated.roomId) {
+      await enforceTableSessionAccess({
+        tenantId,
+        roomId: validated.roomId,
+        actorId: validated.targetActorId,
+        action: "reaction_subscription_create",
+        requiredFeature: "event_subscriptions"
+      });
+    }
     const created = await reactionStore.create({
       tenantId,
       ...validated
@@ -5385,6 +5826,16 @@ async function handleReactionSubscriptions(req, res, url, requestId, rateHeaders
         "x-request-id": requestId,
         "x-correlation-id": trace.correlationId,
         ...rateHeaders
+      });
+    }
+
+    if (existing.roomId) {
+      await enforceTableSessionAccess({
+        tenantId: existing.tenantId,
+        roomId: existing.roomId,
+        actorId: existing.targetActorId,
+        action: req.method === "DELETE" ? "reaction_subscription_delete" : "reaction_subscription_update",
+        requiredFeature: "event_subscriptions"
       });
     }
 
@@ -5708,6 +6159,15 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
     }
 
     const validated = validateSubscriptionInput(body);
+    if (validated.roomId) {
+      await enforceTableSessionAccess({
+        tenantId,
+        roomId: validated.roomId,
+        actorId: validated.actorId,
+        action: "event_subscription_create",
+        requiredFeature: "event_subscriptions"
+      });
+    }
     const created = await subscriptionStore.create({
       tenantId,
       ...validated
@@ -5771,6 +6231,16 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
         "x-request-id": requestId,
         "x-correlation-id": trace.correlationId,
         ...rateHeaders
+      });
+    }
+
+    if (existing.roomId) {
+      await enforceTableSessionAccess({
+        tenantId,
+        roomId: existing.roomId,
+        actorId: existing.actorId,
+        action: req.method === "DELETE" ? "event_subscription_delete" : "event_subscription_update",
+        requiredFeature: "event_subscriptions"
       });
     }
 
@@ -5905,7 +6375,10 @@ const server = http.createServer(async (req, res) => {
             paymentMode: PRIVATE_TABLE_PAYMENT_MODE,
             priceUsd: PRIVATE_TABLE_PRICE_USD,
             defaultSessionMinutes: PRIVATE_TABLE_DEFAULT_SESSION_MINUTES,
-            webhookConfigured: Boolean(PRIVATE_TABLE_PAYMENT_WEBHOOK_URL)
+            webhookConfigured: Boolean(PRIVATE_TABLE_PAYMENT_WEBHOOK_URL),
+            sessionSweepMs: TABLE_SESSION_SWEEP_MS,
+            defaultPlanId: TABLE_PLAN_DEFAULT_ID,
+            plans: Object.values(TABLE_PLAN_CATALOG)
           },
           webhooks: webhookDispatcher.getStats(),
           reactions: reactionEngine.getStats()

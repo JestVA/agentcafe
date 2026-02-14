@@ -1,0 +1,24 @@
+# Keep published package focused on the OpenClaw extension.
+
+# VCS/editor noise
+.git
+.gitignore
+.DS_Store
+
+# Local/runtime artifacts
+node_modules
+npm-debug.log*
+*.tgz
+
+# Project-internal docs/plans
+implementation
+agent-cafe
+
+# Runtime/world app code is not required by the CaptainClaw extension package
+runtime
+world
+
+# Environment files
+.env
+.env.local
+.env.*.local

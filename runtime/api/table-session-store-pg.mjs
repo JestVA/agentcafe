@@ -46,6 +46,14 @@ function normalizeActorIds(value) {
   return out;
 }
 
+function normalizePlanId(value) {
+  const planId = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_");
+  return planId || "cappuccino";
+}
+
 function normalizeAmountUsd(value, fallback = 0) {
   const parsed = Number(value == null || value === "" ? fallback : value);
   if (!Number.isFinite(parsed)) {
@@ -68,6 +76,7 @@ function mapRow(row) {
     tenantId: row.tenant_id,
     roomId: row.room_id,
     ownerActorId: row.owner_actor_id,
+    planId: normalizePlanId(row.plan_id),
     invitedActorIds: normalizeActorIds(invited),
     status: row.status,
     startedAt: ts(row.started_at),
@@ -94,7 +103,7 @@ export class PgTableSessionStore {
   async get({ tenantId, sessionId }) {
     const result = await this.pool.query(
       `
-      SELECT session_id, tenant_id, room_id, owner_actor_id, invited_actor_ids, status, started_at, expires_at, ended_at,
+      SELECT session_id, tenant_id, room_id, owner_actor_id, plan_id, invited_actor_ids, status, started_at, expires_at, ended_at,
              payment_ref, payment_amount_usd, payment_provider, metadata, created_at, updated_at
       FROM table_sessions
       WHERE tenant_id = $1 AND session_id = $2::uuid
@@ -109,6 +118,7 @@ export class PgTableSessionStore {
     tenantId,
     roomId,
     ownerActorId,
+    planId = "cappuccino",
     invitedActorIds = [],
     status = "active",
     startedAt,
@@ -124,15 +134,15 @@ export class PgTableSessionStore {
     const result = await this.pool.query(
       `
       INSERT INTO table_sessions (
-        session_id, tenant_id, room_id, owner_actor_id, invited_actor_ids, status,
+        session_id, tenant_id, room_id, owner_actor_id, plan_id, invited_actor_ids, status,
         started_at, expires_at, ended_at, payment_ref, payment_amount_usd, payment_provider,
         metadata, created_at, updated_at
       ) VALUES (
-        $1::uuid, $2, $3, $4, $5::jsonb, $6,
-        $7::timestamptz, $8::timestamptz, $9::timestamptz, $10, $11::numeric, $12,
-        $13::jsonb, now(), now()
+        $1::uuid, $2, $3, $4, $5, $6::jsonb, $7,
+        $8::timestamptz, $9::timestamptz, $10::timestamptz, $11, $12::numeric, $13,
+        $14::jsonb, now(), now()
       )
-      RETURNING session_id, tenant_id, room_id, owner_actor_id, invited_actor_ids, status, started_at, expires_at, ended_at,
+      RETURNING session_id, tenant_id, room_id, owner_actor_id, plan_id, invited_actor_ids, status, started_at, expires_at, ended_at,
                 payment_ref, payment_amount_usd, payment_provider, metadata, created_at, updated_at
       `,
       [
@@ -140,6 +150,7 @@ export class PgTableSessionStore {
         tenantId,
         roomId,
         String(ownerActorId),
+        normalizePlanId(planId),
         JSON.stringify(normalizeActorIds(invitedActorIds)),
         normalizedStatus,
         normalizeText(startedAt) || nowIso,
@@ -170,24 +181,26 @@ export class PgTableSessionStore {
       `
       UPDATE table_sessions
       SET
-        invited_actor_ids = $3::jsonb,
-        status = $4,
-        started_at = $5::timestamptz,
-        expires_at = $6::timestamptz,
-        ended_at = $7::timestamptz,
-        payment_ref = $8,
-        payment_amount_usd = $9::numeric,
-        payment_provider = $10,
-        metadata = $11::jsonb,
+        plan_id = $3,
+        invited_actor_ids = $4::jsonb,
+        status = $5,
+        started_at = $6::timestamptz,
+        expires_at = $7::timestamptz,
+        ended_at = $8::timestamptz,
+        payment_ref = $9,
+        payment_amount_usd = $10::numeric,
+        payment_provider = $11,
+        metadata = $12::jsonb,
         updated_at = now()
       WHERE tenant_id = $1
         AND session_id = $2::uuid
-      RETURNING session_id, tenant_id, room_id, owner_actor_id, invited_actor_ids, status, started_at, expires_at, ended_at,
+      RETURNING session_id, tenant_id, room_id, owner_actor_id, plan_id, invited_actor_ids, status, started_at, expires_at, ended_at,
                 payment_ref, payment_amount_usd, payment_provider, metadata, created_at, updated_at
       `,
       [
         tenantId,
         sessionId,
+        normalizePlanId("planId" in patch ? patch.planId : existing.planId),
         JSON.stringify(
           "invitedActorIds" in patch ? normalizeActorIds(patch.invitedActorIds) : existing.invitedActorIds
         ),
@@ -231,7 +244,7 @@ export class PgTableSessionStore {
 
     params.push(max);
     const sql = `
-      SELECT session_id, tenant_id, room_id, owner_actor_id, invited_actor_ids, status, started_at, expires_at, ended_at,
+      SELECT session_id, tenant_id, room_id, owner_actor_id, plan_id, invited_actor_ids, status, started_at, expires_at, ended_at,
              payment_ref, payment_amount_usd, payment_provider, metadata, created_at, updated_at
       FROM table_sessions
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}

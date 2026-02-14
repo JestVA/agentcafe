@@ -2,6 +2,30 @@ import { randomUUID } from "node:crypto";
 
 const DEFAULT_WORLD_URL = "http://127.0.0.1:3846";
 const DEFAULT_RUNTIME_URL = "http://127.0.0.1:3850";
+const DEFAULT_TENANT_ID = process.env.AGENTCAFE_TENANT_ID || "default";
+const DEFAULT_ROOM_ID = process.env.AGENTCAFE_ROOM_ID || "main";
+const MENU = [
+  {
+    id: "espresso_make_no_mistake",
+    name: "Espresso - Make No Mistake",
+    flavor: "Be precise, decisive, and verify assumptions before action."
+  },
+  {
+    id: "americano_sprint",
+    name: "Americano - Sprint",
+    flavor: "Move fast, prioritize progress, keep explanations minimal."
+  },
+  {
+    id: "cappuccino_flow",
+    name: "Cappuccino - Flow",
+    flavor: "Creative but structured: propose options, then choose one and execute."
+  },
+  {
+    id: "decaf_reflect",
+    name: "Decaf - Reflect",
+    flavor: "Pause and review: debug, audit, and reduce risk before changes."
+  }
+];
 
 function toQueryString(params = {}) {
   const search = new URLSearchParams();
@@ -44,15 +68,16 @@ export class AgentCafeClient {
       resolvedWorld ||
       DEFAULT_RUNTIME_URL;
 
-    this.worldUrl = String(resolvedWorld).replace(/\/$/, "");
     this.runtimeUrl = String(resolvedRuntime).replace(/\/$/, "");
-    this.worldApiKey = String(worldApiKey || process.env.AGENTCAFE_WORLD_API_KEY || "").trim();
+    const resolvedWorldApiKey = String(worldApiKey || process.env.AGENTCAFE_WORLD_API_KEY || "").trim();
     this.runtimeApiKey = String(
       runtimeApiKey ||
       process.env.AGENTCAFE_RUNTIME_API_KEY ||
       process.env.API_AUTH_TOKEN ||
-      this.worldApiKey
+      resolvedWorldApiKey
     ).trim();
+    this.defaultTenantId = DEFAULT_TENANT_ID;
+    this.defaultRoomId = DEFAULT_ROOM_ID;
   }
 
   async #request(baseUrl, path, options = {}) {
@@ -89,17 +114,6 @@ export class AgentCafeClient {
     return payload;
   }
 
-  #world(path, options = {}) {
-    const headers = {
-      ...(options.headers || {}),
-      ...(this.worldApiKey ? { "x-api-key": this.worldApiKey } : {})
-    };
-    return this.#request(this.worldUrl, path, {
-      ...options,
-      headers
-    });
-  }
-
   #runtime(path, options = {}) {
     const headers = {
       ...(options.headers || {}),
@@ -111,53 +125,145 @@ export class AgentCafeClient {
     });
   }
 
-  // Legacy world API
-  requestMenu() {
-    return this.#world("/api/menu");
+  #runtimeContext(body = {}) {
+    return {
+      tenantId: body.tenantId || this.defaultTenantId,
+      roomId: body.roomId || this.defaultRoomId,
+      actorId: body.actorId
+    };
   }
 
-  getState({ actorId } = {}) {
-    const query = actorId ? `?actorId=${encodeURIComponent(actorId)}` : "";
-    return this.#world(`/api/state${query}`);
+  // Backward-compatible helpers backed by canonical runtime API
+  requestMenu() {
+    return Promise.resolve({ ok: true, menu: MENU.map((item) => ({ ...item })) });
+  }
+
+  async getState({ tenantId, roomId, actorId } = {}) {
+    const replay = await this.runtimeReplay({
+      tenantId: tenantId || this.defaultTenantId,
+      roomId: roomId || this.defaultRoomId,
+      actorId,
+      minutes: 120
+    });
+    const snapshot = replay?.data?.snapshot || {};
+    const actors = Array.isArray(snapshot.actors)
+      ? snapshot.actors.map((item) => ({
+          id: item.actorId,
+          x: Number(item.x || 0),
+          y: Number(item.y || 0),
+          inCafe: item.status !== "inactive",
+          bubble: null,
+          currentOrder: item.lastOrder
+            ? {
+                itemId: item.lastOrder.itemId,
+                size: item.lastOrder.size,
+                orderedAt: item.lastOrder.ts
+              }
+            : null
+        }))
+      : [];
+    return {
+      ok: true,
+      world: { width: 20, height: 12 },
+      actors
+    };
   }
 
   enterCafe({ actorId } = {}) {
-    return this.#world("/api/enter", {
-      method: "POST",
-      body: { actorId }
+    return this.runtimeCommand("enter", {
+      ...this.#runtimeContext({ actorId })
     });
   }
 
-  move({ actorId, direction, steps = 1 }) {
-    return this.#world("/api/move", {
-      method: "POST",
-      body: { actorId, direction, steps }
+  async move({ actorId, direction, steps = 1 } = {}) {
+    const response = await this.runtimeCommand("move", {
+      ...this.#runtimeContext({ actorId }),
+      direction,
+      steps
     });
+    return {
+      ok: true,
+      movement: {
+        direction,
+        steps: Number(steps) || 1
+      },
+      actor: {
+        id: actorId
+      },
+      runtime: response
+    };
   }
 
-  say({ actorId, text, ttlMs }) {
-    return this.#world("/api/say", {
-      method: "POST",
-      body: { actorId, text, ttlMs }
+  async say({ actorId, text, ttlMs } = {}) {
+    const response = await this.runtimeCommand("say", {
+      ...this.#runtimeContext({ actorId }),
+      text,
+      ttlMs
     });
+    return {
+      ok: true,
+      bubble: {
+        text,
+        ttlMs: Number(ttlMs) || 7000
+      },
+      runtime: response
+    };
   }
 
-  orderCoffee({ actorId, itemId, size = "regular" }) {
-    return this.#world("/api/order", {
-      method: "POST",
-      body: { actorId, itemId, size }
+  async orderCoffee({ actorId, itemId, size = "regular" } = {}) {
+    const response = await this.runtimeCommand("order", {
+      ...this.#runtimeContext({ actorId }),
+      itemId,
+      size
     });
+    const item = MENU.find((candidate) => candidate.id === itemId);
+    return {
+      ok: true,
+      order: {
+        itemId,
+        size,
+        name: item?.name || itemId,
+        flavor: item?.flavor || null
+      },
+      runtime: response
+    };
   }
 
-  getCurrentOrder({ actorId } = {}) {
-    const query = actorId ? `?actorId=${encodeURIComponent(actorId)}` : "";
-    return this.#world(`/api/order${query}`);
+  async getCurrentOrder({ actorId, tenantId, roomId } = {}) {
+    const timeline = await this.runtimeTimeline({
+      tenantId: tenantId || this.defaultTenantId,
+      roomId: roomId || this.defaultRoomId,
+      actorId,
+      types: ["order_changed"],
+      order: "desc",
+      limit: 1
+    });
+    const event = timeline?.data?.events?.[0] || null;
+    if (!event) {
+      return {
+        ok: true,
+        actorId: actorId || null,
+        order: null
+      };
+    }
+    const itemId = event?.payload?.itemId || null;
+    const item = MENU.find((candidate) => candidate.id === itemId);
+    return {
+      ok: true,
+      actorId: actorId || event.actorId || null,
+      order: {
+        itemId,
+        size: event?.payload?.size || "regular",
+        name: item?.name || itemId,
+        flavor: item?.flavor || null,
+        orderedAt: event.timestamp || null
+      }
+    };
   }
 
   leaveCafe({ actorId } = {}) {
-    return this.#world("/api/leave", {
-      method: "POST",
-      body: { actorId }
+    return this.runtimeCommand("leave", {
+      ...this.#runtimeContext({ actorId })
     });
   }
 

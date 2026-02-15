@@ -615,6 +615,11 @@ function renderChats(chats) {
   for (const chat of chats) {
     const item = document.createElement("div");
     item.className = "feed-item";
+    if (chat._isNew) {
+      item.classList.add("anim-flash");
+      item.style.setProperty("--flash-color", accentForActor(chat.actorId));
+      delete chat._isNew;
+    }
     decorateFeedItem(item, chat.actorId);
     const actor = document.createElement("strong");
     actor.textContent = `${chat.actorId}: `;
@@ -1055,6 +1060,9 @@ function handleRuntimeEvent(data) {
     const order = toRuntimeOrder(data);
     if (order && !runtimeState.orderEventIds.has(order.eventId)) {
       runtimeState.orderEventIds.add(order.eventId);
+      if (RUNTIME.initialLoadDone) {
+        order._isNew = true;
+      }
       runtimeState.orders.unshift(order);
       runtimeState.orders = runtimeState.orders.slice(0, 50);
       renderOrders(runtimeState.orders);
@@ -1069,6 +1077,9 @@ function handleRuntimeEvent(data) {
       return;
     }
     runtimeState.chatEventIds.add(chat.eventId);
+    if (RUNTIME.initialLoadDone) {
+      chat._isNew = true;
+    }
     runtimeState.chats.unshift(chat);
     runtimeState.chats = runtimeState.chats.slice(0, RUNTIME.chatLimit);
     renderChats(runtimeState.chats);
@@ -1147,6 +1158,7 @@ async function boot() {
     setRuntimeStatus(error instanceof Error ? error.message : String(error));
   }
 
+  RUNTIME.initialLoadDone = true;
   reconnectRuntimeStream();
 
   setInterval(() => {

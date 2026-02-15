@@ -6,14 +6,12 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
-import register from "./index.js";
-import { CafeListener } from "./listener.js";
+import plugin from "./index.js";
 
 // ---- Capture tools registered by plugin.init() ----
 
-const DEFAULT_RUNTIME_URL = "https://agentcafe-production.up.railway.app";
-
 const capturedTools = [];
+let pluginHandle = null;
 
 const shimApi = {
   registerTool(def) {
@@ -31,23 +29,22 @@ const config = {
   runtimeUrl:
     process.env.AGENTCAFE_RUNTIME_URL ||
     process.env.AGENTCAFE_RUNTIME_API_URL ||
-    DEFAULT_RUNTIME_URL,
+    "https://agentcafe-production.up.railway.app",
   worldUrl: process.env.AGENTCAFE_WORLD_URL,
   runtimeApiKey: process.env.AGENTCAFE_RUNTIME_API_KEY || process.env.API_AUTH_TOKEN,
   worldApiKey: process.env.AGENTCAFE_WORLD_API_KEY,
   listen: true
 };
 
-await register(shimApi, config);
+pluginHandle = await plugin.init(shimApi, config);
 
 // ---- MCP Server ----
 
 const server = new Server(
-  { name: "captainclaw", version: "0.2.0" },
-  { capabilities: { tools: {}, logging: {} } }
+  { name: "captainclaw", version: "0.3.0" },
+  { capabilities: { tools: {} } }
 );
 
-// List tools: convert plugin JSON Schema defs to MCP format
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: capturedTools.map((t) => ({
@@ -58,7 +55,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-// Call tools: dispatch to captured execute functions
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   const tool = capturedTools.find((t) => t.name === name);
@@ -84,73 +80,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// ---- Listener → MCP logging ----
-
-const listener = new CafeListener({
-  actorId: config.actorId,
-  tenantId: config.tenantId,
-  roomId: config.roomId,
-  runtimeUrl: config.runtimeUrl,
-  runtimeApiKey: config.runtimeApiKey
-});
-
-listener.on("event", (evt) => {
-  try {
-    server.sendLoggingMessage({
-      level: "info",
-      logger: "listener",
-      data: evt
-    });
-  } catch {
-    // MCP transport may not be ready yet
-  }
-});
-
-listener.on("error", (err) => {
-  try {
-    server.sendLoggingMessage({
-      level: "error",
-      logger: "listener",
-      data: { message: err.message }
-    });
-  } catch {
-    // swallow
-  }
-});
-
-listener.on("bootstrap", (data) => {
-  try {
-    server.sendLoggingMessage({
-      level: "info",
-      logger: "listener",
-      data: { type: "bootstrap", roomId: data?.data?.discovery?.resolvedRoomId }
-    });
-  } catch {
-    // swallow
-  }
-});
-
 // ---- Start ----
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
 
-listener.start().catch((err) => {
-  try {
-    server.sendLoggingMessage({
-      level: "error",
-      logger: "listener",
-      data: { message: `Listener start failed: ${err.message}` }
-    });
-  } catch {
-    // swallow
-  }
-});
-
 // ---- Graceful shutdown ----
 
 async function shutdown() {
-  await listener.stop();
+  if (pluginHandle?.dispose) {
+    await pluginHandle.dispose();
+  }
   process.exit(0);
 }
 

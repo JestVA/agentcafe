@@ -54,6 +54,7 @@ const runtimeState = {
   orderEventIds: new Set(),
   presence: [],
   runtimeConnected: false,
+  streamCursor: 0,
   lastRuntimeEventAt: null,
   worldActorsById: new Map()
 };
@@ -441,6 +442,17 @@ function debounce(fn, waitMs) {
   };
 }
 
+function updateStreamCursorFromEvents(events = []) {
+  let next = Number(runtimeState.streamCursor || 0);
+  for (const event of events) {
+    const seq = Number(event?.sequence || 0);
+    if (Number.isFinite(seq) && seq > next) {
+      next = seq;
+    }
+  }
+  runtimeState.streamCursor = next;
+}
+
 function ensureWorldActor(map, actorId) {
   const id = String(actorId || "agent");
   let actor = map.get(id);
@@ -672,6 +684,7 @@ async function refreshRuntimeChats() {
     `&types=conversation_message_posted&order=desc&limit=${RUNTIME.chatLimit}`;
   const payload = await api(path);
   const events = payload?.data?.events || [];
+  updateStreamCursorFromEvents(events);
   runtimeState.chatEventIds.clear();
   runtimeState.chats = events
     .map(toRuntimeChat)
@@ -690,6 +703,7 @@ async function refreshRuntimeOrders() {
     `&types=order_changed&order=desc&limit=50`;
   const payload = await api(path);
   const events = payload?.data?.events || [];
+  updateStreamCursorFromEvents(events);
   runtimeState.orderEventIds.clear();
   runtimeState.orders = events
     .map(toRuntimeOrder)
@@ -728,6 +742,7 @@ const refreshRuntimeOrdersDebounced = debounce(() => {
 
 function handleRuntimeEvent(data) {
   runtimeState.lastRuntimeEventAt = Date.now();
+  updateStreamCursorFromEvents([data]);
 
   if (WORLD_EVENT_TYPES.has(data.type)) {
     applyEventToWorld(runtimeState.worldActorsById, data, { source: "live" });
@@ -764,8 +779,10 @@ function handleRuntimeEvent(data) {
 }
 
 function connectRuntimeStream() {
+  const cursor = Number(runtimeState.streamCursor || 0);
+  const cursorPart = Number.isFinite(cursor) && cursor > 0 ? `&cursor=${encodeURIComponent(cursor)}` : "";
   const source = new EventSource(
-    `/v1/streams/market-events?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&roomId=${encodeURIComponent(RUNTIME.roomId)}`
+    `/v1/streams/market-events?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&roomId=${encodeURIComponent(RUNTIME.roomId)}${cursorPart}`
   );
 
   source.addEventListener("ready", () => {

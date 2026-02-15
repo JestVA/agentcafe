@@ -1,4 +1,5 @@
 import { AgentCafeClient } from "./http-client.js";
+import { CafeListener } from "./listener.js";
 
 const DEFAULT_WORLD_URL = process.env.AGENTCAFE_WORLD_URL || "http://127.0.0.1:3846";
 const DEFAULT_RUNTIME_URL =
@@ -1013,6 +1014,79 @@ const plugin = {
       }
     });
 
+    // ---- Listener (opt-in via config.listen) ----
+
+    let listener = null;
+    const eventBuffer = [];
+    const MAX_BUFFER = 200;
+
+    if (config.listen !== false) {
+      listener = new CafeListener({
+        client,
+        actorId: configuredActorId,
+        tenantId: configuredTenantId,
+        roomId: configuredRoomId,
+        types: config.listenTypes || undefined,
+        pollTimeoutMs: config.pollTimeoutMs,
+        baseDelayMs: config.baseDelayMs,
+        maxBackoffMs: config.maxBackoffMs,
+        rebootstrapAfter: config.rebootstrapAfter,
+        autoAck: config.autoAck
+      });
+
+      listener.on("event", (evt) => {
+        if (eventBuffer.length >= MAX_BUFFER) {
+          eventBuffer.shift();
+        }
+        eventBuffer.push(evt);
+      });
+
+      listener.start().catch(() => {
+        // start errors are non-fatal for plugin init
+      });
+    }
+
+    api.registerTool({
+      name: "checkInbox",
+      description:
+        "Drain buffered listener events (mentions, tasks, messages). Returns all events received since last check. Requires config.listen=true for background listening; otherwise polls once.",
+      parameters: {
+        type: "object",
+        properties: {},
+        additionalProperties: false
+      },
+      execute: async () => {
+        if (listener) {
+          // drain buffer
+          const events = eventBuffer.splice(0, eventBuffer.length);
+          if (events.length === 0) {
+            return toolResult("No new events.", { events: [] });
+          }
+          const summary = events.map((e) => `${e.type} from ${e.actorId || "unknown"}`).join(", ");
+          return toolResult(`${events.length} event(s): ${summary}`, { events });
+        }
+
+        // fallback: one-shot poll if listener not running
+        try {
+          const response = await client.runtimeEventsPoll({
+            actorId: configuredActorId,
+            tenantId: configuredTenantId,
+            roomId: configuredRoomId,
+            timeoutMs: 1000,
+            types: "mention_created,task_assigned,conversation_message_posted"
+          });
+          const events = response?.data?.events || [];
+          if (events.length === 0) {
+            return toolResult("No new events.", { events: [] });
+          }
+          const summary = events.map((e) => `${e.type} from ${e.actorId || "unknown"}`).join(", ");
+          return toolResult(`${events.length} event(s): ${summary}`, { events });
+        } catch (err) {
+          return toolResult(`Poll failed: ${err.message}`, { events: [] });
+        }
+      }
+    });
+
     if (typeof api.registerCommand === "function") {
       try {
         api.registerCommand({
@@ -1035,7 +1109,9 @@ const plugin = {
 
     return {
       async dispose() {
-        // No background resources to stop.
+        if (listener) {
+          await listener.stop();
+        }
       }
     };
   }

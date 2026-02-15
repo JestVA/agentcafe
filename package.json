@@ -31,7 +31,6 @@
     "check": "node --check plugin/index.js && node --check plugin/http-client.js && node --check plugin/listener.js && node --check world/server.mjs && npm run runtime:check && npm run runtime:test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
     "pg": "^8.16.3",
     "redis": "^4.7.0"
   },

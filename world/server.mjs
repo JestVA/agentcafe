@@ -15,6 +15,13 @@ const WORLD_API_AUTH_QUERY_PARAM =
 const RUNTIME_API_URL = String(process.env.AGENTCAFE_RUNTIME_API_URL || "http://127.0.0.1:3850").replace(/\/$/, "");
 const RUNTIME_API_KEY = String(process.env.AGENTCAFE_RUNTIME_API_KEY || "").trim();
 const RUNTIME_PROXY_TIMEOUT_MS = Math.max(250, Number(process.env.AGENTCAFE_RUNTIME_PROXY_TIMEOUT_MS || 6000));
+const RUNTIME_PROXY_TIMEOUT_MAX_MS = Math.max(
+  RUNTIME_PROXY_TIMEOUT_MS,
+  Number(process.env.AGENTCAFE_RUNTIME_PROXY_TIMEOUT_MAX_MS || 65000)
+);
+const RUNTIME_PROXY_POLL_GRACE_MS = Math.max(250, Number(process.env.AGENTCAFE_RUNTIME_PROXY_POLL_GRACE_MS || 2000));
+const DEFAULT_DISCOVERY_TENANT_ID = String(process.env.AGENTCAFE_DEFAULT_TENANT_ID || "default").trim() || "default";
+const DEFAULT_DISCOVERY_ROOM_ID = String(process.env.AGENTCAFE_DEFAULT_ROOM_ID || "main").trim() || "main";
 
 const STATIC_FILES = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
@@ -96,6 +103,17 @@ function runtimeProxyPath(pathname, searchParams) {
   return target;
 }
 
+function resolveRuntimeProxyTimeoutMs(runtimePathname, searchParams) {
+  if (runtimePathname !== "/v1/events/poll") {
+    return RUNTIME_PROXY_TIMEOUT_MS;
+  }
+
+  const raw = Number(searchParams.get("timeoutMs"));
+  const pollTimeoutMs = Number.isFinite(raw) ? Math.max(250, Math.min(raw, 30000)) : 25000;
+  const withGrace = pollTimeoutMs + RUNTIME_PROXY_POLL_GRACE_MS;
+  return Math.max(RUNTIME_PROXY_TIMEOUT_MS, Math.min(RUNTIME_PROXY_TIMEOUT_MAX_MS, withGrace));
+}
+
 function proxyRequestHeaders(req, allowList = []) {
   const out = {};
   for (const name of allowList) {
@@ -132,9 +150,10 @@ async function readBody(req) {
 async function proxyRuntimeJson(req, res, url, runtimePathname) {
   const upstreamUrl = runtimeProxyPath(runtimePathname, url.searchParams);
   const controller = new AbortController();
+  const timeoutMs = resolveRuntimeProxyTimeoutMs(runtimePathname, url.searchParams);
   const timeout = setTimeout(() => {
     controller.abort();
-  }, RUNTIME_PROXY_TIMEOUT_MS);
+  }, timeoutMs);
 
   try {
     const init = {
@@ -283,7 +302,14 @@ async function handleApi(req, res, url) {
   if (legacyApiRoute(url.pathname)) {
     return sendError(res, 410, "legacy api removed; use canonical runtime routes under /v1/*", {
       code: "ERR_LEGACY_API_REMOVED",
-      canonicalBasePath: "/v1"
+      canonicalBasePath: "/v1",
+      migration: {
+        bootstrap: `/v1/bootstrap?tenantId=${encodeURIComponent(DEFAULT_DISCOVERY_TENANT_ID)}&roomId=${encodeURIComponent(DEFAULT_DISCOVERY_ROOM_ID)}`,
+        rooms: `/v1/rooms?tenantId=${encodeURIComponent(DEFAULT_DISCOVERY_TENANT_ID)}`,
+        stream: `/v1/streams/market-events?tenantId=${encodeURIComponent(DEFAULT_DISCOVERY_TENANT_ID)}&roomId=${encodeURIComponent(DEFAULT_DISCOVERY_ROOM_ID)}`,
+        commands: "/v1/commands/{enter|leave|move|say|order}",
+        eventsPoll: `/v1/events/poll?tenantId=${encodeURIComponent(DEFAULT_DISCOVERY_TENANT_ID)}&roomId=${encodeURIComponent(DEFAULT_DISCOVERY_ROOM_ID)}&cursor=0`
+      }
     });
   }
 

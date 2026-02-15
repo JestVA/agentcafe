@@ -10,7 +10,9 @@ const DEFAULT_TENANT_ID = process.env.AGENTCAFE_TENANT_ID || "default";
 const DEFAULT_ROOM_ID = process.env.AGENTCAFE_ROOM_ID || "main";
 
 const RUNTIME_QUERY_PATHS = {
+  bootstrap: "/v1/bootstrap",
   events: "/v1/events",
+  events_poll: "/v1/events/poll",
   mentions: "/v1/mentions",
   timeline: "/v1/timeline",
   replay: "/v1/replay",
@@ -658,6 +660,69 @@ const plugin = {
     });
 
     api.registerTool({
+      name: "runtimeTaskHandoff",
+      description: "Execute a structured task handoff action (assign|accept|blocked|done).",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+          actorId: { type: "string" },
+          tenantId: { type: "string" },
+          action: { type: "string", enum: ["assign", "accept", "blocked", "done"] },
+          toAssigneeActorId: { type: "string" },
+          note: { type: "string" },
+          blockedReason: { type: "string" },
+          threadId: { type: "string" },
+          replyToEventId: { type: "string" },
+          metadata: { type: "object", additionalProperties: true }
+        },
+        required: ["taskId", "action"],
+        additionalProperties: false
+      },
+      execute: async (input = {}) => {
+        const body = definedEntries({
+          ...withRuntimeContext(input, { includeActor: true }),
+          action: maybeString(input.action),
+          toAssigneeActorId: maybeString(input.toAssigneeActorId, null),
+          note: maybeString(input.note, null),
+          blockedReason: maybeString(input.blockedReason, null),
+          threadId: maybeString(input.threadId, null),
+          replyToEventId: maybeString(input.replyToEventId, null),
+          metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : undefined
+        });
+        const response = await client.runtimeTaskHandoff(input.taskId, body);
+        return runtimeOk("task_handoff", response);
+      }
+    });
+
+    api.registerTool({
+      name: "runtimeTaskHandoffs",
+      description: "List structured handoff audit events for a task.",
+      parameters: {
+        type: "object",
+        properties: {
+          taskId: { type: "string" },
+          tenantId: { type: "string" },
+          cursor: { type: "number" },
+          limit: { type: "number" },
+          order: { type: "string", enum: ["asc", "desc"] }
+        },
+        required: ["taskId"],
+        additionalProperties: false
+      },
+      execute: async (input = {}) => {
+        const query = definedEntries({
+          tenantId: maybeString(input.tenantId, configuredTenantId),
+          cursor: maybeFiniteNumber(input.cursor),
+          limit: maybeFiniteNumber(input.limit),
+          order: maybeString(input.order)
+        });
+        const response = await client.runtimeTaskHandoffs(input.taskId, query);
+        return runtimeOk("task_handoffs", response);
+      }
+    });
+
+    api.registerTool({
       name: "runtimeCreateObject",
       description: "Create shared object (whiteboard|note|token).",
       parameters: {
@@ -955,7 +1020,12 @@ const plugin = {
           description: "Show menu plus canonical runtime endpoint info for CaptainClaw.",
           execute: async () => {
             const menu = await client.requestMenu();
-            return `${buildCommandText(menu.menu)}\nCanonical runtime: ${runtimeUrl}\nUI host: ${worldUrl}`;
+            return (
+              `${buildCommandText(menu.menu)}\n` +
+              `Canonical runtime: ${runtimeUrl}\n` +
+              `Bootstrap: ${runtimeUrl}/v1/bootstrap?tenantId=${encodeURIComponent(configuredTenantId)}&roomId=${encodeURIComponent(configuredRoomId)}&actorId=${encodeURIComponent(configuredActorId)}\n` +
+              `UI host: ${worldUrl}`
+            );
           }
         });
       } catch {

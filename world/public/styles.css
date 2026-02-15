@@ -57,7 +57,7 @@
   --radius-card: 14px;
   --radius-control: 10px;
   --shadow-soft: 0 10px 24px rgba(31, 41, 55, 0.08);
-  --topbar-h: 58px;
+  --topbar-h: 116px;
 }
 
 * {
@@ -81,14 +81,35 @@ body {
 
 .topbar {
   height: var(--topbar-h);
-  display: flex;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: min-content 1fr min-content;
   align-items: center;
   padding: 10px 20px;
 }
 
+.topbar::after {
+  content: "";
+  width: 104px;
+  height: 104px;
+}
+
+.brand-logo {
+  width: 104px;
+  height: 104px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-logo svg {
+  width: 104px;
+  height: 104px;
+  display: block;
+}
+
 .coffee-menu {
   position: relative;
+  justify-self: center;
 }
 
 .coffee-menu-trigger {
@@ -141,22 +162,23 @@ body {
 .world-column {
   min-width: 0;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 230px) min-content;
+  grid-template-rows: auto minmax(180px, 1fr) min-content;
   gap: 6px;
+  min-height: 0;
 }
 
 .world-stage {
   position: relative;
   min-height: 0;
-  display: grid;
-  justify-items: center;
-  align-items: start;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
 }
 
 canvas {
   width: 100%;
   max-width: 100%;
-  max-height: 100%;
+  max-height: min(100%, calc(100vh - var(--topbar-h) - 220px));
   height: auto;
   aspect-ratio: 5 / 3;
   border-radius: 16px;
@@ -180,49 +202,6 @@ canvas {
   padding: 9px;
   display: grid;
   grid-template-rows: min-content 1fr;
-}
-
-.tasks-flyout {
-  position: absolute;
-  top: -44px;
-  left: 0;
-  z-index: 25;
-}
-
-.tasks-pin {
-  border: 0;
-  border-radius: 999px;
-  padding: 8px 12px;
-  color: var(--text-on-accent);
-  font-weight: 700;
-  background: var(--action-secondary-bg);
-  box-shadow: 0 8px 14px rgba(217, 119, 6, 0.22);
-  cursor: pointer;
-}
-
-.tasks-pin:hover {
-  background: var(--action-secondary-bg-hover);
-}
-
-.tasks-popover {
-  margin-top: 8px;
-  width: min(360px, 70vw);
-  max-height: 320px;
-  overflow: auto;
-  padding: 10px;
-  border-radius: var(--radius-card);
-  border: 1px solid var(--border-default);
-  background: var(--bg-overlay);
-  box-shadow: var(--shadow-soft);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.16s ease;
-}
-
-.tasks-flyout:hover .tasks-popover,
-.tasks-flyout:focus-within .tasks-popover {
-  opacity: 1;
-  visibility: visible;
 }
 
 .runtime-subtitle {
@@ -311,12 +290,11 @@ h2 {
 }
 
 .collab-stack {
-  height: auto;
+  height: 100%;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  align-self: start;
 }
 
 .collab-column {
@@ -331,11 +309,14 @@ h2 {
   background: var(--bg-overlay);
 }
 
-.orchestrator-panel {
-  padding: 10px;
-  min-height: 180px;
-  max-height: 260px;
-  overflow: auto;
+.collab-stack > .session-panel:first-child {
+  flex: 0 0 58%;
+  min-height: 0;
+}
+
+.tasks-panel {
+  flex: 1 1 auto;
+  min-height: 220px;
 }
 
 ul,
@@ -430,19 +411,17 @@ li {
 #inboxList,
 #roomList,
 #sessionList,
-#presenceList,
 #presenceListFooter,
 #ordersList,
 #taskList,
-#menuList,
-#orchestratorMetricsList {
+#menuList {
   height: 100%;
   overflow: auto;
   padding-right: 4px;
 }
 
 #taskList {
-  max-height: 230px;
+  max-height: none;
 }
 
 #menuList {
@@ -490,7 +469,7 @@ li {
   }
 
   .world-column {
-    grid-template-rows: minmax(420px, 58vh) minmax(220px, auto) min-content;
+    grid-template-rows: auto minmax(220px, auto) min-content;
   }
 
   .world-lower-panels {

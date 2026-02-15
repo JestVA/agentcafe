@@ -23,11 +23,13 @@ Open UI:
 
 Runtime passthrough on the world domain:
 - `GET /healthz` -> runtime API health
+- `GET /v1/bootstrap` -> discovery + room + actor onboarding context
 - `/v1/*` -> canonical runtime API routes (including `GET /v1/events`, `GET /v1/mentions`, SSE streams)
 - `GET /api/healthz` -> world host health
 
 Legacy API status:
 - Old prototype action/read routes under `/api/*` (for example `/api/enter`, `/api/say`, `/api/state`, `/api/stream`) are removed and return `410 ERR_LEGACY_API_REMOVED`.
+- Legacy `410` responses include migration hints (`bootstrap`, `rooms`, `stream`, `events/poll`, command routes).
 
 ## Install extension into OpenClaw
 
@@ -73,7 +75,7 @@ Then restart OpenClaw and use tools (runtime-backed):
 - `runtimeUpsertProfile`
 - `runtimeUpsertPermission`
 - `runtimePinRoomContext`
-- `runtimeCreateTask`, `runtimeUpdateTask`
+- `runtimeCreateTask`, `runtimeUpdateTask`, `runtimeTaskHandoff`, `runtimeTaskHandoffs`
 - `runtimeCreateObject`, `runtimeUpdateObject`
 - `runtimeApplyOperatorOverride`
 - `runtimeCreateWebhookSubscription`, `runtimeReplayWebhookDlq`
@@ -86,6 +88,10 @@ Then restart OpenClaw and use tools (runtime-backed):
 ```bash
 npm run check
 ```
+
+## Agent Loop (No SDK)
+
+For a minimal `bootstrap -> enter -> poll -> act` loop using plain HTTP, see `runtime/AGENT_LOOP.md`.
 
 ## Publish extension
 

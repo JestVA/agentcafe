@@ -52,6 +52,7 @@ import { createInboxCounterStore } from "./inbox-counter-store.mjs";
 import { PgInboxStore } from "./inbox-store-pg.mjs";
 import { FileInboxStore } from "./inbox-store.mjs";
 
+
 const HOST = process.env.API_HOST || "0.0.0.0";
 const PORT = Number(process.env.API_PORT || process.env.PORT || 3850);
 const STREAM_HEARTBEAT_MS = Number(process.env.API_STREAM_HEARTBEAT_MS || 15000);
@@ -72,6 +73,12 @@ const TABLE_SESSIONS_FILE = process.env.TABLE_SESSIONS_FILE || "./runtime/data/t
 const INBOX_FILE = process.env.INBOX_FILE || "./runtime/data/inbox.json";
 const PRESENCE_DEFAULT_TTL_MS = Math.max(1000, Number(process.env.PRESENCE_DEFAULT_TTL_MS || 60000));
 const PRESENCE_SWEEP_MS = Math.max(500, Number(process.env.PRESENCE_SWEEP_MS || 2000));
+const EVENTS_POLL_IMPLICIT_HEARTBEAT_DEFAULT =
+  String(process.env.EVENTS_POLL_IMPLICIT_HEARTBEAT_DEFAULT ?? "true").toLowerCase() !== "false";
+const EVENTS_POLL_HEARTBEAT_MIN_INTERVAL_MS = Math.max(
+  1000,
+  Number(process.env.EVENTS_POLL_HEARTBEAT_MIN_INTERVAL_MS || 20000)
+);
 const API_DB_AUTO_MIGRATE = String(process.env.API_DB_AUTO_MIGRATE ?? "true").toLowerCase() !== "false";
 const API_MAX_CHAT_MESSAGE_CHARS = Math.max(
   1,
@@ -100,6 +107,8 @@ const TABLE_PLAN_DEFAULT_ID_RAW = String(process.env.TABLE_PLAN_DEFAULT_ID || "c
   .toLowerCase();
 const TABLE_PLAN_CATALOG = parseTablePlanCatalog(process.env.TABLE_PLAN_CATALOG_JSON);
 const TABLE_PLAN_DEFAULT_ID = resolveDefaultTablePlanId(TABLE_PLAN_CATALOG, TABLE_PLAN_DEFAULT_ID_RAW);
+const DEFAULT_DISCOVERY_TENANT_ID = String(process.env.AGENTCAFE_DEFAULT_TENANT_ID || "default").trim() || "default";
+const DEFAULT_DISCOVERY_ROOM_ID = String(process.env.AGENTCAFE_DEFAULT_ROOM_ID || "main").trim() || "main";
 
 const pgPool = await createPostgresPool();
 if (pgPool && API_DB_AUTO_MIGRATE) {
@@ -179,6 +188,7 @@ await reactionStore.init();
 await taskStore.init();
 await sharedObjectStore.init();
 await roomStore.init();
+await ensureDefaultLobbyRoomSeed();
 await tableSessionStore.init();
 await pinnedContextStore.init();
 await inboxStore.init();
@@ -212,7 +222,7 @@ const inboxProjectorState = {
 
 let inboxProjectionQueue = Promise.resolve();
 
-async function runInboxProjection(event) {
+async function runInboxProjection(event, { live = false } = {}) {
   if (!event || typeof event !== "object") {
     return;
   }
@@ -230,7 +240,7 @@ async function runInboxProjection(event) {
 function queueInboxProjection(event) {
   inboxProjectionQueue = inboxProjectionQueue
     .then(async () => {
-      await runInboxProjection(event);
+      await runInboxProjection(event, { live: true });
       inboxProjectorState.lastError = null;
     })
     .catch((error) => {
@@ -270,6 +280,50 @@ async function bootstrapInboxProjection() {
   const counters = await inboxStore.rebuildUnreadCounters?.();
   inboxProjectorState.rebuiltCounters = Number(counters?.updated || 0);
   inboxProjectorState.bootstrappedAt = new Date().toISOString();
+}
+
+async function ensureDefaultLobbyRoomSeed() {
+  const tenantId = DEFAULT_DISCOVERY_TENANT_ID;
+  const roomId = DEFAULT_DISCOVERY_ROOM_ID;
+  const existing = await roomStore.get({ tenantId, roomId });
+  if (existing) {
+    return existing;
+  }
+
+  const seeded = await roomStore.upsert({
+    tenantId,
+    roomId,
+    roomType: "lobby",
+    displayName: "Main Cafe Lobby",
+    ownerActorId: null,
+    metadata: {
+      seeded: true,
+      seededBy: "system"
+    }
+  });
+
+  try {
+    await eventStore.append(
+      createEvent({
+        tenantId,
+        roomId,
+        actorId: "system",
+        type: EVENT_TYPES.ROOM_CREATED,
+        payload: {
+          roomId,
+          roomType: seeded.roomType,
+          ownerActorId: seeded.ownerActorId,
+          displayName: seeded.displayName,
+          metadata: seeded.metadata,
+          seeded: true
+        }
+      })
+    );
+  } catch {
+    // Best-effort seed event; room discovery must still work without this event.
+  }
+
+  return seeded;
 }
 
 await bootstrapInboxProjection();
@@ -396,12 +450,14 @@ const LOCAL_MEMORY_EVENT_TYPES = [
   EVENT_TYPES.TASK_ASSIGNED,
   EVENT_TYPES.TASK_PROGRESS_UPDATED,
   EVENT_TYPES.TASK_COMPLETED,
+  EVENT_TYPES.TASK_HANDOFF,
   EVENT_TYPES.SHARED_OBJECT_CREATED,
   EVENT_TYPES.SHARED_OBJECT_UPDATED
 ];
 const COLLABORATION_SCORE_EVENT_TYPES = [
   EVENT_TYPES.CONVERSATION_MESSAGE,
   EVENT_TYPES.TASK_ASSIGNED,
+  EVENT_TYPES.TASK_HANDOFF,
   EVENT_TYPES.TASK_COMPLETED,
   EVENT_TYPES.SHARED_OBJECT_CREATED,
   EVENT_TYPES.SHARED_OBJECT_UPDATED
@@ -410,6 +466,7 @@ const COLLABORATION_SCORE_EVENT_TYPES = [
 const CAPABILITY_KEYS = new Set(["canMove", "canSpeak", "canOrder", "canEnterLeave", "canModerate"]);
 const PRESENCE_STATUS_VALUES = new Set(["thinking", "idle", "busy", "inactive"]);
 const TASK_STATE_VALUES = new Set(["open", "active", "done"]);
+const TASK_HANDOFF_ACTION_VALUES = new Set(["assign", "accept", "blocked", "done"]);
 const OBJECT_TYPE_VALUES = new Set(["whiteboard", "note", "token"]);
 const ROOM_TYPE_VALUES = new Set(["lobby", "private_table"]);
 const TABLE_SESSION_STATUS_VALUES = new Set(["active", "ended"]);
@@ -565,6 +622,17 @@ function parseTaskState(value, { field = "state", fallback = "open" } = {}) {
   return state;
 }
 
+function parseTaskHandoffAction(value, { field = "action" } = {}) {
+  const action = String(value || "").trim().toLowerCase();
+  if (!TASK_HANDOFF_ACTION_VALUES.has(action)) {
+    throw new AppError("ERR_INVALID_ENUM", `${field} must be one of assign|accept|blocked|done`, {
+      field,
+      allowed: [...TASK_HANDOFF_ACTION_VALUES]
+    });
+  }
+  return action;
+}
+
 function parseTaskProgress(value, { field = "progress", fallback = 0 } = {}) {
   const number = value == null || value === "" ? Number(fallback) : Number(value);
   if (!Number.isFinite(number)) {
@@ -638,6 +706,49 @@ function validateTaskInput(input, { partial = false } = {}) {
   }
 
   return out;
+}
+
+function nextTaskMetadataWithHandoff(existingMetadata, handoff) {
+  const base = existingMetadata && typeof existingMetadata === "object" ? existingMetadata : {};
+  return {
+    ...base,
+    handoff: {
+      action: handoff.action,
+      by: handoff.actorId,
+      at: handoff.performedAt,
+      fromAssigneeActorId: handoff.fromAssigneeActorId,
+      toAssigneeActorId: handoff.toAssigneeActorId,
+      note: handoff.note,
+      blockedReason: handoff.blockedReason,
+      threadId: handoff.threadId,
+      replyToEventId: handoff.replyToEventId
+    }
+  };
+}
+
+function handoffRecipients({ action, actorId, ownerActorId, previousAssigneeActorId, nextAssigneeActorId }) {
+  const targets = new Set();
+  const add = (value) => {
+    const next = String(value || "").trim();
+    if (!next || next === actorId) {
+      return;
+    }
+    targets.add(next);
+  };
+
+  add(ownerActorId);
+  if (action === "assign") {
+    add(previousAssigneeActorId);
+    add(nextAssigneeActorId);
+  } else if (action === "accept") {
+    add(previousAssigneeActorId);
+  } else if (action === "blocked") {
+    add(nextAssigneeActorId);
+  } else if (action === "done") {
+    add(nextAssigneeActorId);
+  }
+
+  return [...targets];
 }
 
 function parseSharedObjectType(value, { field = "objectType", fallback = "note" } = {}) {
@@ -1674,6 +1785,65 @@ async function emitPresenceInactive({
   };
 }
 
+async function touchPresenceFromEventsPoll({
+  tenantId,
+  roomId,
+  actorId,
+  status = null,
+  ttlMs = PRESENCE_DEFAULT_TTL_MS,
+  minIntervalMs = EVENTS_POLL_HEARTBEAT_MIN_INTERVAL_MS
+}) {
+  try {
+    const existing = await presenceStore.get({ tenantId, roomId, actorId });
+    const existingStatus = existing && PRESENCE_STATUS_VALUES.has(String(existing.status || "").toLowerCase())
+      ? String(existing.status || "").toLowerCase()
+      : null;
+    const targetStatus =
+      status ||
+      (existingStatus && existingStatus !== "inactive"
+        ? existingStatus
+        : "idle");
+    const nowMs = Date.now();
+    const existingHeartbeatMs = Date.parse(existing?.lastHeartbeatAt || "");
+    const canThrottle =
+      existing &&
+      existing.isActive === true &&
+      existing.status === targetStatus &&
+      Number.isFinite(existingHeartbeatMs) &&
+      nowMs - existingHeartbeatMs < Math.max(1000, Number(minIntervalMs) || EVENTS_POLL_HEARTBEAT_MIN_INTERVAL_MS);
+
+    if (canThrottle) {
+      return {
+        refreshed: false,
+        reason: "throttled",
+        presence: existing
+      };
+    }
+
+    const result = await emitPresenceHeartbeat({
+      tenantId,
+      roomId,
+      actorId,
+      status: targetStatus,
+      ttlMs,
+      reason: "events_poll_activity",
+      source: "agent"
+    });
+    return {
+      refreshed: true,
+      reason: "updated",
+      presence: result.presence
+    };
+  } catch (error) {
+    return {
+      refreshed: false,
+      reason: "error",
+      presence: null,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 async function applyPresenceFromCommand({
   tenantId,
   roomId,
@@ -2343,6 +2513,246 @@ async function handleEvents(req, res, url, requestId, rateHeaders) {
   );
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function listBootstrapRooms({ tenantId, limit = 20 } = {}) {
+  const rooms = await roomStore.list({
+    tenantId,
+    limit: Math.max(1, Math.min(Number(limit) || 20, 200))
+  });
+  if (rooms.length) {
+    return rooms;
+  }
+  const seeded = await ensureDefaultLobbyRoomSeed();
+  return seeded ? [seeded] : [];
+}
+
+function preferredThreadIdFromInboxItems(items = []) {
+  for (const item of items) {
+    if (!item || item.ackedAt) {
+      continue;
+    }
+    if (item.threadId) {
+      return item.threadId;
+    }
+    const payloadThreadId = item.payload?.threadId || item.payload?.sourceMessageId || null;
+    if (payloadThreadId) {
+      return payloadThreadId;
+    }
+  }
+  return null;
+}
+
+function conversationThreadIdFromEvent(event) {
+  if (!event || event.type !== EVENT_TYPES.CONVERSATION_MESSAGE) {
+    return null;
+  }
+  return (
+    event.payload?.conversation?.threadId ||
+    event.payload?.conversation?.replyToMessageId ||
+    event.payload?.conversation?.parentMessageId ||
+    event.payload?.conversation?.messageId ||
+    null
+  );
+}
+
+async function handleBootstrap(req, res, url, requestId, rateHeaders) {
+  const tenantId = url.searchParams.get("tenantId") || DEFAULT_DISCOVERY_TENANT_ID;
+  const requestedRoomId = url.searchParams.get("roomId") || DEFAULT_DISCOVERY_ROOM_ID;
+  const actorId = url.searchParams.get("actorId") || undefined;
+  const includeBacklog = parseBool(url.searchParams.get("includeBacklog"), true);
+  const roomLimit = Math.max(1, Math.min(Number(url.searchParams.get("roomLimit") || 20), 200));
+
+  const rooms = await listBootstrapRooms({ tenantId, limit: roomLimit });
+  const fallbackRoom = rooms.find((item) => item.roomId === requestedRoomId) || rooms[0] || null;
+  const roomId = fallbackRoom?.roomId || requestedRoomId || DEFAULT_DISCOVERY_ROOM_ID;
+
+  const [presenceRows, roomTasksOpen, roomTasksActive] = await Promise.all([
+    presenceStore.list({ tenantId, roomId, active: true, limit: 100 }),
+    includeBacklog ? taskStore.list({ tenantId, roomId, state: "open", limit: 20 }) : Promise.resolve([]),
+    includeBacklog ? taskStore.list({ tenantId, roomId, state: "active", limit: 20 }) : Promise.resolve([])
+  ]);
+
+  let inbox = [];
+  let unreadCount = 0;
+  let suggestedThreadId = null;
+  let actorPresence = null;
+  let assignedTasks = [];
+
+  if (actorId) {
+    const [actorPresenceState, actorUnreadCount, actorInbox, actorTasks] = await Promise.all([
+      presenceStore.get({ tenantId, roomId, actorId }),
+      inboxStore.countUnread({ tenantId, roomId, actorId }),
+      inboxStore.list({
+        tenantId,
+        roomId,
+        actorId,
+        unreadOnly: true,
+        order: "desc",
+        limit: 20
+      }),
+      taskStore.list({
+        tenantId,
+        roomId,
+        assigneeActorId: actorId,
+        limit: 50
+      })
+    ]);
+    actorPresence = actorPresenceState;
+    unreadCount = actorUnreadCount;
+    inbox = actorInbox;
+    assignedTasks = actorTasks;
+    suggestedThreadId = preferredThreadIdFromInboxItems(actorInbox);
+
+    if (!suggestedThreadId) {
+      const latest = await eventStore.list({
+        tenantId,
+        roomId,
+        actorId,
+        types: [EVENT_TYPES.CONVERSATION_MESSAGE],
+        order: "desc",
+        limit: 1
+      });
+      suggestedThreadId = conversationThreadIdFromEvent(latest[0]);
+    }
+  }
+
+  const tasks = [...roomTasksActive, ...roomTasksOpen]
+    .filter((task, index, arr) => arr.findIndex((candidate) => candidate.taskId === task.taskId) === index)
+    .slice(0, 40);
+
+  const apiKeyHint = API_AUTH_TOKEN ? `?${encodeURIComponent(API_AUTH_QUERY_PARAM)}=<API_KEY>` : "";
+  const streamPath =
+    `/v1/streams/market-events?tenantId=${encodeURIComponent(tenantId)}` +
+    `&roomId=${encodeURIComponent(roomId)}`;
+  const pollBase =
+    `/v1/events/poll?tenantId=${encodeURIComponent(tenantId)}` +
+    `&roomId=${encodeURIComponent(roomId)}` +
+    (actorId ? `&actorId=${encodeURIComponent(actorId)}` : "");
+
+  return json(
+    res,
+    200,
+    {
+      ok: true,
+      data: {
+        discovery: {
+          canonicalApiVersion: "v1",
+          defaultTenantId: DEFAULT_DISCOVERY_TENANT_ID,
+          defaultRoomId: DEFAULT_DISCOVERY_ROOM_ID,
+          resolvedRoomId: roomId,
+          rooms,
+          streamPath: `${streamPath}${apiKeyHint}`,
+          pollPath: `${pollBase}&cursor=<cursor>${apiKeyHint}`,
+          commandsPath: "/v1/commands/{enter|leave|move|say|order}",
+          heartbeatPath: "/v1/presence/heartbeat",
+          inboxPath: "/v1/inbox",
+          timelinePath: "/v1/timeline"
+        },
+        actor: actorId
+          ? {
+              actorId,
+              unreadCount,
+              suggestedThreadId: suggestedThreadId || null,
+              presence: actorPresence || null,
+              inbox: inbox.slice(0, 20),
+              assignedTasks: assignedTasks.slice(0, 20)
+            }
+          : null,
+        room: {
+          roomId,
+          presence: presenceRows,
+          openOrActiveTasks: tasks
+        }
+      }
+    },
+    {
+      "x-request-id": requestId,
+      ...rateHeaders
+    }
+  );
+}
+
+async function handleEventsPoll(req, res, url, requestId, rateHeaders) {
+  const tenantId = url.searchParams.get("tenantId") || undefined;
+  const roomId = url.searchParams.get("roomId") || undefined;
+  const actorId = url.searchParams.get("actorId") || undefined;
+  const afterEventId = url.searchParams.get("afterEventId") || undefined;
+  const afterCursor = Number(url.searchParams.get("cursor") || 0);
+  const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") || 100), 500));
+  const timeoutMs = Math.max(0, Math.min(Number(url.searchParams.get("timeoutMs") || 25000), 30000));
+  const pollIntervalMs = Math.max(100, Math.min(Number(url.searchParams.get("pollIntervalMs") || 500), 5000));
+  const types = parseTypes(url.searchParams.get("types"));
+  const heartbeatEnabled = actorId
+    ? parseBool(url.searchParams.get("heartbeat"), EVENTS_POLL_IMPLICIT_HEARTBEAT_DEFAULT)
+    : false;
+  const heartbeatStatusRaw = url.searchParams.get("status");
+  const heartbeatStatus = heartbeatStatusRaw ? parsePresenceStatus(heartbeatStatusRaw, "idle") : null;
+  const ttlMsRaw = url.searchParams.get("ttlMs");
+  const heartbeatTtlMs =
+    ttlMsRaw == null || ttlMsRaw === ""
+      ? PRESENCE_DEFAULT_TTL_MS
+      : Math.max(1000, Math.min(Number(ttlMsRaw) || PRESENCE_DEFAULT_TTL_MS, 24 * 60 * 60 * 1000));
+
+  const started = Date.now();
+  let pollPresence = null;
+  if (heartbeatEnabled && tenantId && roomId && actorId) {
+    pollPresence = await touchPresenceFromEventsPoll({
+      tenantId,
+      roomId,
+      actorId,
+      status: heartbeatStatus,
+      ttlMs: heartbeatTtlMs
+    });
+  }
+
+  let events = [];
+  while (true) {
+    events = await eventStore.list({
+      tenantId,
+      roomId,
+      actorId,
+      afterEventId,
+      afterCursor: Number.isFinite(afterCursor) ? afterCursor : undefined,
+      limit,
+      types,
+      order: "asc"
+    });
+    if (events.length > 0) {
+      break;
+    }
+    if (Date.now() - started >= timeoutMs) {
+      break;
+    }
+    await delay(pollIntervalMs);
+  }
+
+  const nextCursor = events.length
+    ? events[events.length - 1].sequence
+    : (Number.isFinite(afterCursor) ? afterCursor : 0);
+
+  return json(
+    res,
+    200,
+    {
+      ok: true,
+      data: {
+        events,
+        count: events.length,
+        nextCursor,
+        waitedMs: Date.now() - started,
+        presence: pollPresence
+      }
+    },
+    {
+      "x-request-id": requestId,
+      ...rateHeaders
+    }
+  );
+}
+
 async function handleMentions(req, res, url, requestId, rateHeaders) {
   const tenantId = url.searchParams.get("tenantId") || undefined;
   const roomId = url.searchParams.get("roomId") || undefined;
@@ -2865,6 +3275,20 @@ async function handleLocalMemory(req, res, url, requestId, rateHeaders) {
     } else if (event.type === EVENT_TYPES.TASK_COMPLETED) {
       out.taskId = event.payload?.taskId || null;
       out.completedBy = event.payload?.completedBy || null;
+    } else if (event.type === EVENT_TYPES.TASK_HANDOFF) {
+      out.taskId = event.payload?.taskId || null;
+      out.handoffId = event.payload?.handoffId || null;
+      out.action = event.payload?.action || null;
+      out.fromAssigneeActorId = event.payload?.fromAssigneeActorId || null;
+      out.toAssigneeActorId = event.payload?.toAssigneeActorId || null;
+      out.initiatedBy = event.payload?.initiatedBy || null;
+      out.ownerActorId = event.payload?.ownerActorId || null;
+      out.state = event.payload?.state || null;
+      out.progress = Number(event.payload?.progress || 0);
+      out.threadId = event.payload?.threadId || null;
+      out.replyToEventId = event.payload?.replyToEventId || null;
+      out.note = event.payload?.note || null;
+      out.blockedReason = event.payload?.blockedReason || null;
     } else if (
       event.type === EVENT_TYPES.SHARED_OBJECT_CREATED ||
       event.type === EVENT_TYPES.SHARED_OBJECT_UPDATED
@@ -5180,6 +5604,365 @@ async function handleTasks(req, res, url, requestId, rateHeaders) {
     );
   }
 
+  const handoffMatch = url.pathname.match(/^\/v1\/tasks\/([^/]+)\/handoffs$/);
+  if (req.method === "GET" && handoffMatch) {
+    const tenantId = url.searchParams.get("tenantId") || "default";
+    const taskId = decodeURIComponent(handoffMatch[1]);
+    const task = await taskStore.get({ tenantId, taskId });
+    if (!task) {
+      throw new AppError("ERR_NOT_FOUND", "Task not found", {
+        tenantId,
+        taskId
+      }, 404);
+    }
+
+    const cursor = url.searchParams.get("cursor") || undefined;
+    const limit = Math.max(1, Math.min(Number(url.searchParams.get("limit") || 50), 200));
+    const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
+    const events = await eventStore.list({
+      tenantId,
+      roomId: task.roomId,
+      afterCursor: cursor,
+      types: [EVENT_TYPES.TASK_HANDOFF],
+      limit: Math.max(limit * 6, limit),
+      order
+    });
+    const handoffs = events.filter((event) => event.payload?.taskId === taskId).slice(0, limit);
+    const nextCursor = handoffs.length ? handoffs[handoffs.length - 1].sequence : Number(cursor || 0);
+
+    return json(
+      res,
+      200,
+      {
+        ok: true,
+        data: {
+          taskId,
+          handoffs,
+          count: handoffs.length,
+          nextCursor
+        }
+      },
+      {
+        "x-request-id": requestId,
+        ...rateHeaders
+      }
+    );
+  }
+
+  if (req.method === "POST" && handoffMatch) {
+    const body = await readJson(req);
+    const tenantId = optionalString(body, "tenantId", url.searchParams.get("tenantId") || "default");
+    const taskId = decodeURIComponent(handoffMatch[1]);
+    const actorId = requireString(body, "actorId");
+    const existing = await taskStore.get({ tenantId, taskId });
+    if (!existing) {
+      throw new AppError("ERR_NOT_FOUND", "Task not found", {
+        tenantId,
+        taskId
+      }, 404);
+    }
+
+    const trace = createTraceContext({
+      requestId,
+      route: url.pathname,
+      method: req.method,
+      body,
+      tenantId,
+      roomId: existing.roomId,
+      actorId
+    });
+
+    try {
+      const scope = `${tenantId}:${existing.roomId}:tasks:${taskId}:handoff`;
+      const idempotent = await idempotencyGuard({
+        req,
+        tenantId,
+        scope,
+        body,
+        traceCorrelationId: trace.correlationId
+      });
+      if (idempotent.check.status === "replay") {
+        traces.finish(trace.correlationId, "success", { replay: true });
+        return json(res, idempotent.check.record.statusCode, idempotent.check.record.responseBody, {
+          "x-idempotent-replay": "true",
+          "x-request-id": requestId,
+          "x-correlation-id": trace.correlationId,
+          ...rateHeaders
+        });
+      }
+
+      await enforceOperatorOverrides({
+        tenantId,
+        roomId: existing.roomId,
+        actorId,
+        action: "task_update",
+        traceCorrelationId: trace.correlationId
+      });
+
+      if (existing.state === "done") {
+        throw new AppError("ERR_CONFLICT", "Cannot handoff a completed task", {
+          tenantId,
+          taskId,
+          state: existing.state
+        }, 409);
+      }
+
+      const action = parseTaskHandoffAction(optionalString(body, "action"), { field: "action" });
+      const note = optionalString(body, "note", null);
+      const blockedReason = optionalString(body, "blockedReason", null);
+      const threadId = optionalString(body, "threadId", null);
+      const replyToEventId = optionalString(body, "replyToEventId", null);
+      const handoffMetadata =
+        body.metadata && typeof body.metadata === "object" ? optionalObject(body, "metadata", {}) : {};
+      const performedAt = new Date().toISOString();
+      const previousAssigneeActorId = existing.assigneeActorId || null;
+      let nextAssigneeActorId = previousAssigneeActorId;
+      const patch = {};
+
+      if (action === "assign") {
+        const toAssigneeActorId = optionalString(body, "toAssigneeActorId", null);
+        if (!toAssigneeActorId) {
+          throw new AppError("ERR_MISSING_FIELD", "Missing required field: toAssigneeActorId", {
+            field: "toAssigneeActorId"
+          });
+        }
+        if (existing.createdBy !== actorId && previousAssigneeActorId !== actorId) {
+          throw new AppError("ERR_FORBIDDEN", "Only owner or current assignee can assign handoff", {
+            tenantId,
+            taskId,
+            actorId,
+            ownerActorId: existing.createdBy,
+            currentAssigneeActorId: previousAssigneeActorId
+          }, 403);
+        }
+        patch.assigneeActorId = toAssigneeActorId;
+        nextAssigneeActorId = toAssigneeActorId;
+        if (existing.state === "open") {
+          patch.state = "active";
+        }
+      } else if (action === "accept") {
+        if (previousAssigneeActorId && previousAssigneeActorId !== actorId) {
+          throw new AppError("ERR_FORBIDDEN", "Only current assignee can accept handoff", {
+            tenantId,
+            taskId,
+            actorId,
+            currentAssigneeActorId: previousAssigneeActorId
+          }, 403);
+        }
+        if (previousAssigneeActorId !== actorId) {
+          patch.assigneeActorId = actorId;
+        }
+        nextAssigneeActorId = actorId;
+        if (existing.state === "open") {
+          patch.state = "active";
+        }
+      } else if (action === "blocked") {
+        if (previousAssigneeActorId && previousAssigneeActorId !== actorId && existing.createdBy !== actorId) {
+          throw new AppError("ERR_FORBIDDEN", "Only owner or current assignee can mark task blocked", {
+            tenantId,
+            taskId,
+            actorId,
+            ownerActorId: existing.createdBy,
+            currentAssigneeActorId: previousAssigneeActorId
+          }, 403);
+        }
+        if (!blockedReason && !note) {
+          throw new AppError("ERR_VALIDATION", "blocked handoff requires blockedReason or note", {
+            fields: ["blockedReason", "note"]
+          });
+        }
+      } else if (action === "done") {
+        if (previousAssigneeActorId && previousAssigneeActorId !== actorId && existing.createdBy !== actorId) {
+          throw new AppError("ERR_FORBIDDEN", "Only owner or current assignee can complete handoff", {
+            tenantId,
+            taskId,
+            actorId,
+            ownerActorId: existing.createdBy,
+            currentAssigneeActorId: previousAssigneeActorId
+          }, 403);
+        }
+        patch.state = "done";
+        patch.progress = 100;
+        if (!previousAssigneeActorId) {
+          patch.assigneeActorId = actorId;
+          nextAssigneeActorId = actorId;
+        }
+      }
+
+      patch.metadata = nextTaskMetadataWithHandoff(existing.metadata, {
+        action,
+        actorId,
+        performedAt,
+        fromAssigneeActorId: previousAssigneeActorId,
+        toAssigneeActorId: nextAssigneeActorId,
+        note,
+        blockedReason,
+        threadId,
+        replyToEventId
+      });
+
+      const task = await taskStore.patch({
+        tenantId,
+        taskId,
+        actorId,
+        patch
+      });
+
+      const emitted = [];
+      const updatedEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId: existing.roomId,
+          actorId,
+          type: EVENT_TYPES.TASK_UPDATED,
+          payload: {
+            taskId,
+            changedFields: Object.keys(patch),
+            state: task.state,
+            assigneeActorId: task.assigneeActorId,
+            progress: task.progress
+          },
+          correlationId: trace.correlationId
+        })
+      );
+      emitted.push(updatedEvent);
+
+      if (existing.assigneeActorId !== task.assigneeActorId) {
+        const assignedEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: existing.roomId,
+            actorId,
+            type: EVENT_TYPES.TASK_ASSIGNED,
+            payload: {
+              taskId,
+              fromAssigneeActorId: existing.assigneeActorId,
+              toAssigneeActorId: task.assigneeActorId,
+              assignedBy: actorId
+            },
+            correlationId: trace.correlationId,
+            causationId: updatedEvent.eventId
+          })
+        );
+        emitted.push(assignedEvent);
+      }
+
+      if (Number(existing.progress) !== Number(task.progress)) {
+        const progressEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: existing.roomId,
+            actorId,
+            type: EVENT_TYPES.TASK_PROGRESS_UPDATED,
+            payload: {
+              taskId,
+              fromProgress: existing.progress,
+              toProgress: task.progress
+            },
+            correlationId: trace.correlationId,
+            causationId: updatedEvent.eventId
+          })
+        );
+        emitted.push(progressEvent);
+      }
+
+      if (existing.state !== "done" && task.state === "done") {
+        const completedEvent = await eventStore.append(
+          createEvent({
+            tenantId,
+            roomId: existing.roomId,
+            actorId,
+            type: EVENT_TYPES.TASK_COMPLETED,
+            payload: {
+              taskId,
+              completedBy: task.completedBy || actorId,
+              completedAt: task.completedAt,
+              progress: task.progress
+            },
+            correlationId: trace.correlationId,
+            causationId: updatedEvent.eventId
+          })
+        );
+        emitted.push(completedEvent);
+      }
+
+      const handoffEvent = await eventStore.append(
+        createEvent({
+          tenantId,
+          roomId: existing.roomId,
+          actorId,
+          type: EVENT_TYPES.TASK_HANDOFF,
+          payload: {
+            handoffId: randomUUID(),
+            taskId,
+            action,
+            fromAssigneeActorId: previousAssigneeActorId,
+            toAssigneeActorId: task.assigneeActorId || null,
+            initiatedBy: actorId,
+            ownerActorId: task.createdBy,
+            state: task.state,
+            progress: task.progress,
+            note,
+            blockedReason,
+            threadId,
+            replyToEventId,
+            metadata: handoffMetadata,
+            targetActorIds: handoffRecipients({
+              action,
+              actorId,
+              ownerActorId: task.createdBy,
+              previousAssigneeActorId,
+              nextAssigneeActorId: task.assigneeActorId || null
+            }),
+            at: performedAt
+          },
+          correlationId: trace.correlationId,
+          causationId: updatedEvent.eventId
+        })
+      );
+      emitted.push(handoffEvent);
+
+      const response = {
+        ok: true,
+        data: {
+          task,
+          handoff: handoffEvent.payload,
+          emittedEvents: emitted.map((item) => ({
+            eventId: item.eventId,
+            sequence: item.sequence,
+            eventType: item.type
+          })),
+          correlationId: trace.correlationId
+        }
+      };
+      await idempotency.commit({
+        storageKey: idempotent.check.storageKey,
+        requestHash: idempotent.requestHash,
+        statusCode: 200,
+        responseBody: response
+      });
+      traces.finish(trace.correlationId, "success");
+      return json(res, 200, response, {
+        "x-request-id": requestId,
+        "x-correlation-id": trace.correlationId,
+        ...rateHeaders
+      });
+    } catch (error) {
+      traces.step(trace.correlationId, REASON_CODES.RC_VALIDATION_ERROR, {
+        message: error instanceof Error ? error.message : String(error),
+        scope: "task_handoff"
+      });
+      traces.finish(trace.correlationId, "error");
+      if (error instanceof AppError) {
+        error.details = {
+          ...(error.details || {}),
+          correlationId: trace.correlationId
+        };
+      }
+      throw error;
+    }
+  }
+
   const match = url.pathname.match(/^\/v1\/tasks\/([^/]+)$/);
   if (req.method === "GET" && match) {
     const tenantId = url.searchParams.get("tenantId") || "default";
@@ -6380,8 +7163,20 @@ const server = http.createServer(async (req, res) => {
             defaultPlanId: TABLE_PLAN_DEFAULT_ID,
             plans: Object.values(TABLE_PLAN_CATALOG)
           },
+          discovery: {
+            defaultTenantId: DEFAULT_DISCOVERY_TENANT_ID,
+            defaultRoomId: DEFAULT_DISCOVERY_ROOM_ID,
+            bootstrapPath:
+              `/v1/bootstrap?tenantId=${encodeURIComponent(DEFAULT_DISCOVERY_TENANT_ID)}` +
+              `&roomId=${encodeURIComponent(DEFAULT_DISCOVERY_ROOM_ID)}`,
+            eventsPollPath:
+              `/v1/events/poll?tenantId=${encodeURIComponent(DEFAULT_DISCOVERY_TENANT_ID)}` +
+              `&roomId=${encodeURIComponent(DEFAULT_DISCOVERY_ROOM_ID)}&cursor=0`,
+            pollImplicitHeartbeatDefault: EVENTS_POLL_IMPLICIT_HEARTBEAT_DEFAULT,
+            pollHeartbeatMinIntervalMs: EVENTS_POLL_HEARTBEAT_MIN_INTERVAL_MS
+          },
           webhooks: webhookDispatcher.getStats(),
-          reactions: reactionEngine.getStats()
+          reactions: reactionEngine.getStats(),
         },
         {
           "x-request-id": requestId,
@@ -6390,8 +7185,16 @@ const server = http.createServer(async (req, res) => {
       );
     }
 
+    if (req.method === "GET" && (url.pathname === "/v1/bootstrap" || url.pathname === "/v1/agent/bootstrap")) {
+      return await handleBootstrap(req, res, url, requestId, rateHeaders);
+    }
+
     if (req.method === "GET" && url.pathname === "/v1/events") {
       return await handleEvents(req, res, url, requestId, rateHeaders);
+    }
+
+    if (req.method === "GET" && url.pathname === "/v1/events/poll") {
+      return await handleEventsPoll(req, res, url, requestId, rateHeaders);
     }
 
     if (req.method === "GET" && url.pathname === "/v1/mentions") {

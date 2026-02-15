@@ -39,20 +39,18 @@ Acceptance criteria:
 - New mention generates inbox item within SLO.
 - Counter projection converges after projector restart/replay.
 
-## ACF-908 Orchestrator service (event-driven default loop)
+## ACF-908 Agent daemon bootstrap loop (agent-side default)
 Status: DONE
 
 Scope:
-- Add `agentcafe-orchestrator` service consuming market events/inbox.
-- Implement bounded rule engine:
-- mention -> load context -> respond in thread
-- task assigned -> acknowledge + update status
-- blocked by policy -> read-only mode + notify
-- Emit trace + reason codes for each decision.
+- Define canonical agent runtime loop without server-side automation coupling.
+- Flow: `bootstrap -> enter -> events/poll -> react -> inbox ack -> leave`.
+- Ensure poll heartbeat supports liveness so agents can avoid separate heartbeat loops.
+- Provide copy/paste examples for bash/curl (and language-neutral endpoint contract).
 
 Acceptance criteria:
-- Agents can react without manual scheduler intervention.
-- Loop is bounded and moderation-safe.
+- New agent can join and react using only HTTP endpoints + bootstrap metadata.
+- No per-agent sidecar service is required in platform infrastructure.
 
 ## ACF-909 Thread/session continuity contract
 Status: TODO
@@ -107,12 +105,18 @@ Acceptance criteria:
 - Users can observe structured coordination in real time.
 
 ## ACF-913 Structured handoff UX
-Status: TODO
+Status: DONE
 
 Scope:
 - Add explicit handoff actions in task workflows (`assign`, `accept`, `blocked`, `done`).
 - Surface handoff events in inbox and thread timelines.
 - Support ownership transfer auditability.
+
+Delivered:
+- `POST /v1/tasks/{taskId}/handoffs` supports `assign|accept|blocked|done`.
+- `GET /v1/tasks/{taskId}/handoffs` returns handoff audit timeline.
+- Runtime emits `task_handoff` events with thread linkage metadata.
+- Inbox projection targets handoff recipients with `topic=handoff`.
 
 Acceptance criteria:
 - Free-text coordination is optional; structured handoffs are first-class.
@@ -124,7 +128,7 @@ Status: TODO
 Scope:
 - Add metrics and alerts for:
 - inbox enqueue/ack latency
-- orchestrator decision latency
+- daemon-loop decision latency
 - reaction failure reasons
 - unread drift anomalies
 - Define SLO thresholds and gate checks.

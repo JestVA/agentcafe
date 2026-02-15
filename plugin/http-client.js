@@ -278,6 +278,14 @@ export class AgentCafeClient {
     return this.#runtime("/healthz");
   }
 
+  runtimeBootstrap(query = {}) {
+    return this.#runtime(`/v1/bootstrap${toQueryString(query)}`);
+  }
+
+  runtimeEventsPoll(query = {}) {
+    return this.#runtime(`/v1/events/poll${toQueryString(query)}`);
+  }
+
   runtimeCommand(action, body = {}) {
     return this.#runtime(`/v1/commands/${encodeURIComponent(action)}`, {
       method: "POST",
@@ -461,6 +469,18 @@ export class AgentCafeClient {
     });
   }
 
+  runtimeTaskHandoffs(taskId, query = {}) {
+    return this.#runtime(`/v1/tasks/${encodeURIComponent(taskId)}/handoffs${toQueryString(query)}`);
+  }
+
+  runtimeTaskHandoff(taskId, body = {}) {
+    return this.#runtime(`/v1/tasks/${encodeURIComponent(taskId)}/handoffs`, {
+      method: "POST",
+      body,
+      idempotent: true
+    });
+  }
+
   runtimeObjects(query = {}) {
     return this.#runtime(`/v1/objects${toQueryString(query)}`);
   }
@@ -593,5 +613,42 @@ export class AgentCafeClient {
 
   runtimeTrace(correlationId) {
     return this.#runtime(`/v1/traces/${encodeURIComponent(correlationId)}`);
+  }
+
+  async rawFetch(path, { method = "GET", query, body, idempotent, signal } = {}) {
+    const headers = {
+      ...(this.runtimeApiKey ? { "x-api-key": this.runtimeApiKey } : {})
+    };
+    if (body !== undefined) {
+      headers["content-type"] = "application/json";
+    }
+    if (idempotent && !headers["idempotency-key"]) {
+      headers["idempotency-key"] = randomUUID();
+    }
+
+    const queryString = query ? toQueryString(query) : "";
+    const res = await fetch(`${this.runtimeUrl}${path}${queryString}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal
+    });
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+
+    return { status: res.status, headers: res.headers, data };
+  }
+
+  runtimeInboxAck(body = {}) {
+    return this.#runtime("/v1/inbox/ack", {
+      method: "POST",
+      body,
+      idempotent: true
+    });
   }
 }

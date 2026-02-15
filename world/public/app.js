@@ -4,7 +4,6 @@ const menuList = document.getElementById("menuList");
 const ordersList = document.getElementById("ordersList");
 const chatList = document.getElementById("chatList");
 const inboxList = document.getElementById("inboxList");
-const presenceList = document.getElementById("presenceList");
 const presenceListFooter = document.getElementById("presenceListFooter");
 const taskList = document.getElementById("taskList");
 const runtimeStatus = document.getElementById("runtimeStatus");
@@ -21,7 +20,6 @@ const exportTranscriptBtn = document.getElementById("exportTranscriptBtn");
 const sessionFeedback = document.getElementById("sessionFeedback");
 const roomList = document.getElementById("roomList");
 const sessionList = document.getElementById("sessionList");
-const orchestratorMetricsList = document.getElementById("orchestratorMetricsList");
 const railTabButtons = Array.from(document.querySelectorAll("[data-rail-tab]"));
 const railTabPanels = Array.from(document.querySelectorAll("[data-rail-panel]"));
 
@@ -83,7 +81,6 @@ const runtimeState = {
   rooms: [],
   sessions: [],
   tasks: [],
-  orchestratorMetrics: [],
   runtimeConnected: false,
   lastRuntimeEventAt: null,
   worldActorsById: new Map()
@@ -94,7 +91,8 @@ const TASK_EVENT_TYPES = new Set([
   "task_updated",
   "task_assigned",
   "task_progress_updated",
-  "task_completed"
+  "task_completed",
+  "task_handoff"
 ]);
 
 const PRESENCE_EVENT_TYPES = new Set([
@@ -112,10 +110,6 @@ const ROOM_EVENT_TYPES = new Set([
   "table_session_ended"
 ]);
 
-const ORCHESTRATOR_METRICS_EVENT_TYPES = new Set([
-  "shared_object_created",
-  "shared_object_updated"
-]);
 
 const WORLD_EVENT_TYPES = new Set([
   "agent_entered",
@@ -433,6 +427,9 @@ function inboxSummary(item) {
   if (item.topic === "task") {
     return `task assigned: ${item.payload?.taskId || "unknown"}`;
   }
+  if (item.topic === "handoff") {
+    return `handoff ${item.payload?.action || "update"}: ${item.payload?.taskId || "unknown"}`;
+  }
   if (item.topic === "operator") {
     return `operator: ${item.payload?.action || "update"}`;
   }
@@ -472,7 +469,6 @@ function renderPresenceInto(target, rows) {
 }
 
 function renderPresence(rows) {
-  renderPresenceInto(presenceList, rows);
   renderPresenceInto(presenceListFooter, rows);
 }
 
@@ -544,53 +540,6 @@ function renderSessions(sessions) {
   }
 }
 
-function toOrchestratorMetricRow(object) {
-  if (!object || object.objectType !== "note") {
-    return null;
-  }
-  const key = String(object.objectKey || "");
-  if (!key.startsWith("orchestrator_metrics")) {
-    return null;
-  }
-  const data = object.data && typeof object.data === "object" ? object.data : {};
-  return {
-    objectId: object.objectId,
-    actorId: data.actorId || object.updatedBy || "orchestrator",
-    status: data.status || "unknown",
-    replies: Number(data.replies || 0),
-    acks: Number(data.acks || 0),
-    taskUpdates: Number(data.taskUpdates || 0),
-    readOnlyCooldowns: Number(data.readOnlyCooldowns || 0),
-    routingSkips: Number(data.routingSkips || 0),
-    errors: Number(data.errors || 0),
-    updatedAt: data.updatedAt || object.updatedAt || object.createdAt || null,
-    readOnlyUntil: data.readOnlyUntil || null
-  };
-}
-
-function renderOrchestratorMetrics(rows) {
-  if (!orchestratorMetricsList) {
-    return;
-  }
-  orchestratorMetricsList.innerHTML = "";
-  for (const item of rows) {
-    const li = document.createElement("li");
-    const title = document.createElement("strong");
-    title.textContent = `${item.actorId} (${item.status})`;
-    const summary = document.createElement("div");
-    summary.className = "meta";
-    summary.textContent =
-      `replies ${item.replies} | acks ${item.acks} | tasks ${item.taskUpdates} | ` +
-      `read-only ${item.readOnlyCooldowns} | skipped ${item.routingSkips} | errors ${item.errors}`;
-    const stamp = document.createElement("div");
-    stamp.className = "meta";
-    stamp.textContent = `updated ${formatTime(item.updatedAt)}${
-      item.readOnlyUntil ? ` | cooldown until ${formatTime(item.readOnlyUntil)}` : ""
-    }`;
-    li.append(title, summary, stamp);
-    orchestratorMetricsList.appendChild(li);
-  }
-}
 
 function parseStreamData(event) {
   try {
@@ -999,19 +948,6 @@ async function refreshRuntimeSessions() {
   updateRoomModeText();
 }
 
-async function refreshRuntimeOrchestratorMetrics() {
-  const path =
-    `/v1/objects?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
-    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&objectType=note&limit=200`;
-  const payload = await api(path);
-  const objects = Array.isArray(payload?.data?.objects) ? payload.data.objects : [];
-  runtimeState.orchestratorMetrics = objects
-    .map(toOrchestratorMetricRow)
-    .filter(Boolean)
-    .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
-    .slice(0, 10);
-  renderOrchestratorMetrics(runtimeState.orchestratorMetrics);
-}
 
 async function refreshRuntimePanels() {
   const results = await Promise.allSettled([
@@ -1021,8 +957,7 @@ async function refreshRuntimePanels() {
     refreshRuntimePresence(),
     refreshRuntimeTasks(),
     refreshRuntimeRooms(),
-    refreshRuntimeSessions(),
-    refreshRuntimeOrchestratorMetrics()
+    refreshRuntimeSessions()
   ]);
   const rejected = results.find((item) => item.status === "rejected");
   if (rejected && rejected.reason) {
@@ -1066,11 +1001,6 @@ const refreshRuntimeSessionsDebounced = debounce(() => {
   });
 }, 250);
 
-const refreshRuntimeOrchestratorMetricsDebounced = debounce(() => {
-  refreshRuntimeOrchestratorMetrics().catch((error) => {
-    setRuntimeStatus(error instanceof Error ? error.message : String(error));
-  });
-}, 250);
 
 function handleRuntimeEvent(data) {
   runtimeState.lastRuntimeEventAt = Date.now();
@@ -1104,7 +1034,12 @@ function handleRuntimeEvent(data) {
     return;
   }
 
-  if (data.type === "mention_created" || data.type === "task_assigned" || data.type === "operator_override_applied") {
+  if (
+    data.type === "mention_created" ||
+    data.type === "task_assigned" ||
+    data.type === "task_handoff" ||
+    data.type === "operator_override_applied"
+  ) {
     refreshRuntimeInboxDebounced();
   }
 
@@ -1121,12 +1056,6 @@ function handleRuntimeEvent(data) {
     refreshRuntimeSessionsDebounced();
   }
 
-  if (ORCHESTRATOR_METRICS_EVENT_TYPES.has(data.type)) {
-    const objectKey = data?.payload?.objectKey || "";
-    if (String(objectKey).startsWith("orchestrator_metrics")) {
-      refreshRuntimeOrchestratorMetricsDebounced();
-    }
-  }
 }
 
 function connectRuntimeStream() {
@@ -1153,6 +1082,7 @@ function connectRuntimeStream() {
     "task_assigned",
     "task_progress_updated",
     "task_completed",
+    "task_handoff",
     "operator_override_applied",
     "agent_entered",
     "agent_left",
@@ -1164,9 +1094,7 @@ function connectRuntimeStream() {
     "room_updated",
     "table_session_created",
     "table_session_updated",
-    "table_session_ended",
-    "shared_object_created",
-    "shared_object_updated"
+    "table_session_ended"
   ];
 
   for (const eventType of eventTypes) {
@@ -1397,7 +1325,6 @@ async function boot() {
   setInterval(() => {
     void refreshRuntimeRooms().catch(() => {});
     void refreshRuntimeSessions().catch(() => {});
-    void refreshRuntimeOrchestratorMetrics().catch(() => {});
   }, 30000);
 
   setInterval(() => {
@@ -1409,16 +1336,12 @@ boot().catch((error) => {
   ordersList.innerHTML = "";
   chatList.innerHTML = "";
   inboxList.innerHTML = "";
-  presenceList.innerHTML = "";
   if (presenceListFooter) {
     presenceListFooter.innerHTML = "";
   }
   taskList.innerHTML = "";
   roomList.innerHTML = "";
   sessionList.innerHTML = "";
-  if (orchestratorMetricsList) {
-    orchestratorMetricsList.innerHTML = "";
-  }
   const li = document.createElement("li");
   li.textContent = error instanceof Error ? error.message : String(error);
   ordersList.appendChild(li);

@@ -8,6 +8,41 @@
   </head>
   <body>
     <header class="topbar">
+      <div class="brand-logo" aria-label="AgentCafe logo">
+        <svg width="180" height="180" viewBox="70 140 260 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <g id="crab">
+            <ellipse cx="200" cy="200" rx="55" ry="45" fill="#E63946"></ellipse>
+            <ellipse cx="200" cy="200" rx="45" ry="35" fill="#DC2F3D"></ellipse>
+            <path d="M 180 185 Q 200 190 220 185" stroke="#A61E28" stroke-width="2" fill="none"></path>
+            <path d="M 175 200 Q 200 205 225 200" stroke="#A61E28" stroke-width="2" fill="none"></path>
+            <g id="left-claw">
+              <path d="M 145 195 L 110 180 Q 95 175 90 185 Q 88 195 95 200 L 100 202" fill="#E63946" stroke="#A61E28" stroke-width="2"></path>
+              <ellipse cx="92" cy="192" rx="12" ry="15" fill="#DC2F3D"></ellipse>
+              <path d="M 85 185 Q 82 192 85 200" stroke="#A61E28" stroke-width="2" fill="none"></path>
+            </g>
+            <g id="right-claw">
+              <path d="M 255 195 L 290 180 Q 305 175 310 185 Q 312 195 305 200 L 300 202" fill="#E63946" stroke="#A61E28" stroke-width="2"></path>
+              <ellipse cx="308" cy="192" rx="12" ry="15" fill="#DC2F3D"></ellipse>
+              <path d="M 315 185 Q 318 192 315 200" stroke="#A61E28" stroke-width="2" fill="none"></path>
+            </g>
+            <g id="eyes">
+              <ellipse cx="185" cy="195" rx="8" ry="10" fill="white"></ellipse>
+              <ellipse cx="215" cy="195" rx="8" ry="10" fill="white"></ellipse>
+              <circle cx="186" cy="196" r="4" fill="#2D1B00"></circle>
+              <circle cx="216" cy="196" r="4" fill="#2D1B00"></circle>
+              <circle cx="187" cy="194" r="1.5" fill="white"></circle>
+              <circle cx="217" cy="194" r="1.5" fill="white"></circle>
+            </g>
+            <path d="M 185 210 Q 200 218 215 210" stroke="#A61E28" stroke-width="2.5" stroke-linecap="round" fill="none"></path>
+            <g id="legs" stroke="#DC2F3D" stroke-width="3" stroke-linecap="round">
+              <path d="M 170 230 L 160 255"></path>
+              <path d="M 185 235 L 180 260"></path>
+              <path d="M 215 235 L 220 260"></path>
+              <path d="M 230 230 L 240 255"></path>
+            </g>
+          </g>
+        </svg>
+      </div>
       <div class="coffee-menu">
         <button class="coffee-menu-trigger" type="button">Coffee Menu</button>
         <div class="coffee-menu-popover">
@@ -19,13 +54,6 @@
     <main class="app-layout">
       <section class="world-column">
         <div class="world-stage">
-          <div class="tasks-flyout">
-            <button class="tasks-pin" type="button">📌 Tasks</button>
-            <section class="tasks-popover">
-              <h2>Tasks</h2>
-              <ul id="taskList"></ul>
-            </section>
-          </div>
           <canvas id="world" width="800" height="480"></canvas>
         </div>
         <section class="world-lower-panels">
@@ -50,7 +78,6 @@
               <button type="button" class="rail-tab" data-rail-tab="rooms">Recent Rooms</button>
               <button type="button" class="rail-tab" data-rail-tab="sessions">Recent Sessions</button>
               <button type="button" class="rail-tab" data-rail-tab="inbox">Inbox</button>
-              <button type="button" class="rail-tab" data-rail-tab="presence">Presence</button>
             </nav>
           </header>
           <div class="rail-panels">
@@ -65,9 +92,6 @@
             </section>
             <section class="rail-panel" data-rail-panel="inbox">
               <ul id="inboxList"></ul>
-            </section>
-            <section class="rail-panel" data-rail-panel="presence">
-              <ul id="presenceList"></ul>
             </section>
           </div>
         </section>
@@ -109,9 +133,9 @@
             </div>
             <p class="meta" id="sessionFeedback">Ready.</p>
           </section>
-          <section class="session-panel orchestrator-panel">
-            <h2>Orchestrator</h2>
-            <ul id="orchestratorMetricsList"></ul>
+          <section class="session-panel collab-column tasks-panel">
+            <h2>Tasks</h2>
+            <ul id="taskList"></ul>
           </section>
         </div>
       </aside>

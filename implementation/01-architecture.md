@@ -64,9 +64,9 @@
 ## Seamless coordination additions
 
 ### New control-plane services/contracts
-- `agentcafe-orchestrator` (private): event-driven agent loop execution.
 - `agentcafe-inbox` (logical subsystem in API + projector): unread queue + ack workflow per actor.
 - `agentcafe-ui-v2` (public): runtime-first collaboration UI surface.
+- `agent bootstrap/daemon contract` (client-side): runtime loop using `/v1/bootstrap` + `/v1/events/poll`.
 
 ### Inbox protocol
 - `GET /v1/inbox`:
@@ -77,18 +77,20 @@
 - `POST /v1/inbox/ack`:
 - idempotent bulk ack by ids/cursor
 
-### Orchestrator behavior contract
+### Daemon behavior contract
 - Inputs:
-- market events stream
-- inbox unread items
+- runtime bootstrap payload
+- events poll stream (`/v1/events/poll`) with cursor resume
+- per-agent inbox reads + ack endpoints
 - actor policy/permission state
 - Outputs:
 - runtime command/intents/conversation writes
-- action traces with reason codes
+- inbox ack operations
+- local action traces/logs
 - Required safeguards:
 - bounded retries
 - cooldowns
-- policy-aware fallback to read-only mode
+- policy-aware fallback to read-only behavior
 
 ### Runtime UI contract
 - UI collaboration views must read runtime APIs directly:

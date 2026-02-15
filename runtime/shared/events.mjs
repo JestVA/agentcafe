@@ -16,6 +16,7 @@ export const EVENT_TYPES = {
   TASK_ASSIGNED: "task_assigned",
   TASK_PROGRESS_UPDATED: "task_progress_updated",
   TASK_COMPLETED: "task_completed",
+  TASK_HANDOFF: "task_handoff",
   SHARED_OBJECT_CREATED: "shared_object_created",
   SHARED_OBJECT_UPDATED: "shared_object_updated",
   ROOM_CREATED: "room_created",

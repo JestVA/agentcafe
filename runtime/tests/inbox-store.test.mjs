@@ -101,7 +101,7 @@ test("ACF-906 bulk ack by cursor and ids", async () => {
   assert.equal(unread, 0);
 });
 
-test("ACF-907 projection targets mention, task assignment, and operator events", () => {
+test("ACF-907 projection targets mention, task assignment, task handoff, and operator events", () => {
   const mention = projectInboxItemsFromEvent(event());
   assert.equal(mention.length, 1);
   assert.equal(mention[0].actorId, "Kai");
@@ -125,6 +125,34 @@ test("ACF-907 projection targets mention, task assignment, and operator events",
   assert.equal(task.length, 1);
   assert.equal(task[0].actorId, "Mina");
   assert.equal(task[0].topic, "task");
+
+  const handoff = projectInboxItemsFromEvent({
+    sequence: 4,
+    eventId: "66666666-6666-4666-8666-666666666666",
+    tenantId: "default",
+    roomId: "main",
+    actorId: "Nova",
+    type: "task_handoff",
+    timestamp: "2026-02-14T00:00:03.000Z",
+    payload: {
+      taskId: "44444444-4444-4444-8444-444444444444",
+      handoffId: "77777777-7777-4777-8777-777777777777",
+      action: "assign",
+      fromAssigneeActorId: "Nova",
+      toAssigneeActorId: "Mina",
+      initiatedBy: "Nova",
+      ownerActorId: "Nova",
+      targetActorIds: ["Mina", "Kai"],
+      threadId: "thread-9"
+    }
+  });
+  assert.equal(handoff.length, 2);
+  assert.equal(handoff[0].topic, "handoff");
+  assert.equal(handoff[1].topic, "handoff");
+  assert.deepEqual(
+    handoff.map((item) => item.actorId).sort(),
+    ["Kai", "Mina"]
+  );
 
   const operator = projectInboxItemsFromEvent({
     sequence: 3,

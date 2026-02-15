@@ -71,6 +71,28 @@ export function projectInboxItemsFromEvent(event) {
     });
   }
 
+  if (event.type === "task_handoff") {
+    const targetActorIds = Array.isArray(event.payload?.targetActorIds)
+      ? event.payload.targetActorIds
+      : [];
+    return toInboxItems(event, targetActorIds, {
+      topic: "handoff",
+      payload: {
+        taskId: nonEmpty(event.payload?.taskId),
+        handoffId: nonEmpty(event.payload?.handoffId),
+        action: nonEmpty(event.payload?.action),
+        fromAssigneeActorId: nonEmpty(event.payload?.fromAssigneeActorId),
+        toAssigneeActorId: nonEmpty(event.payload?.toAssigneeActorId),
+        initiatedBy: nonEmpty(event.payload?.initiatedBy),
+        ownerActorId: nonEmpty(event.payload?.ownerActorId),
+        threadId: nonEmpty(event.payload?.threadId),
+        replyToEventId: nonEmpty(event.payload?.replyToEventId),
+        note: nonEmpty(event.payload?.note),
+        blockedReason: nonEmpty(event.payload?.blockedReason)
+      }
+    });
+  }
+
   if (event.type === "operator_override_applied") {
     return toInboxItems(event, [event.payload?.targetActorId], {
       topic: "operator",

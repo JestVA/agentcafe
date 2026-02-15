@@ -5,6 +5,7 @@ Append one section per implementation run.
 Historical note:
 - Entries below can reference pre-cutover legacy world endpoints (`/api/*`) from earlier phases.
 - Canonical runtime cutover completed on 2026-02-14; agent integrations should use `/v1/*`.
+- Orchestrator/automation-loop entries are historical and superseded; canonical coordination model is daemon/bootstrap (`runtime/AGENT_LOOP.md`, `agent-cafe/DAEMON.md`).
 
 ## 2026-02-14 - Planning baseline created
 - Author: Codex
@@ -1002,3 +1003,78 @@ Historical note:
   - `implementation/progress/RUN_LOG.md`
 - Verification:
   - `npm run check` passed (`38/38` runtime tests).
+
+## 2026-02-14 - ACF-913 structured handoff UX shipped
+- Author: Codex
+- Story completed:
+  - `ACF-913` Structured handoff UX (`assign|accept|blocked|done`)
+- Scope delivered:
+  - Added task handoff contract endpoint: `POST /v1/tasks/{taskId}/handoffs`.
+  - Added handoff audit read endpoint: `GET /v1/tasks/{taskId}/handoffs`.
+  - Added new runtime event type: `task_handoff` with ownership/state/progress/thread linkage payload.
+  - Added inbox projection for handoff recipients (`topic=handoff`) so structured handoffs are visible without free-text coordination.
+  - Updated plugin client/tools with `runtimeTaskHandoff` and `runtimeTaskHandoffs`.
+  - Updated UI live stream handling to refresh task/inbox rails on `task_handoff` events.
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `runtime/shared/events.mjs`
+  - `runtime/api/inbox-projection.mjs`
+  - `runtime/tests/inbox-store.test.mjs`
+  - `plugin/http-client.js`
+  - `plugin/index.js`
+  - `runtime/README.md`
+  - `runtime/AGENT_LOOP.md`
+  - `README.md`
+  - `world/public/app.js`
+  - `implementation/stories/E10-seamless-coordination.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+  - `implementation/progress/NEXT_RUN.md`
+- Verification:
+  - `npm run check` passed.
+
+## 2026-02-14 - ACF-908 pivoted to server-managed automation
+- Author: Codex
+- Story updated:
+  - `ACF-908` from sidecar orchestrator model to built-in API automation loop.
+- Scope delivered:
+  - Added `runtime/api/agent-automation-engine.mjs` and wired it into `agentcafe-api`.
+  - Automation now runs on startup drain + live inbox projection:
+    - `mention inbox item -> thread context -> reply event -> ack inbox`.
+  - Added profile-aware controls:
+    - global env toggles (`AGENT_AUTOMATION_*`)
+    - per-profile opt-out (`metadata.automation.enabled=false`)
+    - source/thread/actor route filters.
+  - Added automation health stats to `/healthz`.
+  - Removed temporary Railway service `agentcafe-orchestrator-nova` (aborted scale-out plan).
+- Files added:
+  - `runtime/api/agent-automation-engine.mjs`
+  - `runtime/tests/agent-automation-engine.test.mjs`
+- Files updated:
+  - `runtime/api/server.mjs`
+  - `package.json`
+  - `.env.example`
+  - `runtime/README.md`
+  - `implementation/stories/E10-seamless-coordination.md`
+  - `implementation/02-backlog.md`
+  - `implementation/progress/STORY_STATUS.md`
+- Verification:
+  - `npm run runtime:check` passed.
+  - `npm run runtime:test` passed (`42/42`).
+
+## 2026-02-14 - Orchestrator/automation loop removed; daemon pattern retained
+- Author: Codex + Opus
+- Scope delivered:
+  - Removed sidecar orchestrator and server-managed automation loop implementation.
+  - Kept runtime API as canonical and daemon-first integration via bootstrap/poll/ack flow.
+  - Removed UI orchestrator metrics panel wiring and stale CSS selectors.
+  - Updated implementation/docs to describe ACF-908 as agent-side daemon bootstrap pattern.
+- Files removed:
+  - `runtime/orchestrator/worker.mjs`
+  - `runtime/orchestrator/loop.mjs`
+  - `runtime/api/agent-automation-engine.mjs`
+  - `runtime/tests/orchestrator-loop.test.mjs`
+  - `runtime/tests/agent-automation-engine.test.mjs`
+- Verification:
+  - `npm run runtime:check` passed.
+  - `npm run runtime:test` passed (`35/35` after loop test removal).

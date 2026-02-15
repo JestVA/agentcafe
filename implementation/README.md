@@ -5,7 +5,7 @@ This folder is the execution plan for turning AgentCafe from MVP into production
 ## What is here
 - `00-roadmap.md`: phased delivery plan.
 - `01-architecture.md`: target service architecture and contracts.
-- `03-seamless-coordination-spec.md`: gap-closure spec for inbox/orchestrator/runtime UI.
+- `03-seamless-coordination-spec.md`: gap-closure spec for inbox/daemon-loop/runtime UI.
 - `02-backlog.md`: prioritized backlog with story IDs.
 - `stories/`: detailed story sheets by epic.
 - `progress/STORY_STATUS.md`: single status tracker to mark done/in-progress.

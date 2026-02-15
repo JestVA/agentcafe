@@ -33,9 +33,10 @@ export function buildConversationObject(body, { maxTextLength = 120 } = {}) {
     : randomUUID();
 
   const parentMessageId = typeof body.parentMessageId === "string" ? body.parentMessageId.trim() || null : null;
+  const replyToMessageId = typeof body.replyToMessageId === "string" ? body.replyToMessageId.trim() || null : null;
   const threadId = typeof body.threadId === "string" && body.threadId.trim()
     ? body.threadId.trim()
-    : parentMessageId || messageId;
+    : parentMessageId || replyToMessageId || messageId;
 
   const contextWindow = {
     id: typeof body.contextWindowId === "string" ? body.contextWindowId.trim() || null : null,
@@ -46,7 +47,7 @@ export function buildConversationObject(body, { maxTextLength = 120 } = {}) {
     messageId,
     threadId,
     parentMessageId,
-    replyToMessageId: typeof body.replyToMessageId === "string" ? body.replyToMessageId.trim() || null : null,
+    replyToMessageId,
     mentions,
     contextWindow,
     text,

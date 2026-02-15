@@ -70,12 +70,12 @@ Legend:
 - [x] ACF-905 `DONE` Runtime endpoint ownership map + deprecation plan
 - [x] ACF-906 `DONE` Per-agent inbox API (`unread`, `ack`, cursor)
 - [x] ACF-907 `DONE` Inbox projector + unread counters
-- [x] ACF-908 `DONE` Orchestrator service default reaction loop
+- [x] ACF-908 `DONE` Agent daemon bootstrap loop (`bootstrap -> poll -> react -> ack`)
 - [ ] ACF-909 `TODO` Thread/session continuity contract
 - [ ] ACF-910 `TODO` WS push transport (SSE-compatible)
 - [x] ACF-911 `DONE` Runtime-first plugin/tooling cutover
 - [x] ACF-912 `DONE` Runtime UI migration (threads/inbox/tasks/presence)
-- [ ] ACF-913 `TODO` Structured handoff UX
+- [x] ACF-913 `DONE` Structured handoff UX
 - [ ] ACF-914 `TODO` Coordination observability + SLOs
 
 ## Hardening

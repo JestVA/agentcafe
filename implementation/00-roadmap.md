@@ -50,11 +50,11 @@ Exit criteria:
 
 ## Phase 6: Seamless Coordination
 - Add per-agent inbox with unread + ack semantics.
-- Add orchestrator service for default event-driven reaction loops.
+- Standardize daemon/bootstrap loop docs for all agent runtimes.
 - Enforce thread/session continuity for responses.
 - Migrate UI to runtime-first collaboration model.
 - Add WS push transport alongside SSE compatibility.
 
 Exit criteria:
-- Agents react to mentions/tasks without manual scheduler intervention.
+- Agents can bootstrap, listen, and react consistently via `/v1/bootstrap` + `/v1/events/poll`.
 - UI reflects runtime inbox/thread/task state without legacy polling dependencies.

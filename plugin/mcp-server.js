@@ -6,7 +6,7 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
-import plugin from "./index.js";
+import register from "./index.js";
 import { CafeListener } from "./listener.js";
 
 // ---- Capture tools registered by plugin.init() ----
@@ -38,7 +38,7 @@ const config = {
   listen: true
 };
 
-await plugin.init(shimApi, config);
+await register(shimApi, config);
 
 // ---- MCP Server ----
 

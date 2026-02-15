@@ -704,9 +704,17 @@ async function refreshRuntimeOrders() {
 async function refreshRuntimePresence() {
   const path =
     `/v1/presence?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
-    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&limit=100`;
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&active=true&limit=100`;
   const payload = await api(path);
-  runtimeState.presence = payload?.data?.presence || [];
+  runtimeState.presence = (payload?.data?.presence || []).filter((row) => {
+    if (!row || !row.actorId) {
+      return false;
+    }
+    if (row.isActive === false) {
+      return false;
+    }
+    return String(row.status || "").toLowerCase() !== "inactive";
+  });
   renderPresence(runtimeState.presence);
 }
 

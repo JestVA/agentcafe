@@ -3,25 +3,8 @@ const ctx = canvas.getContext("2d");
 const menuList = document.getElementById("menuList");
 const ordersList = document.getElementById("ordersList");
 const chatList = document.getElementById("chatList");
-const inboxList = document.getElementById("inboxList");
 const presenceListFooter = document.getElementById("presenceListFooter");
-const taskList = document.getElementById("taskList");
 const runtimeStatus = document.getElementById("runtimeStatus");
-const roomModeText = document.getElementById("roomModeText");
-const focusRoomInput = document.getElementById("focusRoomInput");
-const focusRoomBtn = document.getElementById("focusRoomBtn");
-const tableRoomInput = document.getElementById("tableRoomInput");
-const tableOwnerInput = document.getElementById("tableOwnerInput");
-const tableInvitesInput = document.getElementById("tableInvitesInput");
-const tableDurationInput = document.getElementById("tableDurationInput");
-const paymentProofInput = document.getElementById("paymentProofInput");
-const openTableBtn = document.getElementById("openTableBtn");
-const exportTranscriptBtn = document.getElementById("exportTranscriptBtn");
-const sessionFeedback = document.getElementById("sessionFeedback");
-const roomList = document.getElementById("roomList");
-const sessionList = document.getElementById("sessionList");
-const railTabButtons = Array.from(document.querySelectorAll("[data-rail-tab]"));
-const railTabPanels = Array.from(document.querySelectorAll("[data-rail-panel]"));
 
 const WORLD = {
   width: 20,
@@ -61,14 +44,7 @@ const MENU = [
 const RUNTIME = {
   tenantId: "default",
   roomId: "main",
-  chatLimit: 100,
-  inboxLimit: 100,
-  presenceLimit: 100,
-  taskLimit: 100,
-  roomLimit: 50,
-  sessionLimit: 50,
-  timelineExportLimit: 1000,
-  privateTablePriceUsd: 4
+  chatLimit: 100
 };
 
 const runtimeState = {
@@ -76,24 +52,11 @@ const runtimeState = {
   chatEventIds: new Set(),
   orders: [],
   orderEventIds: new Set(),
-  inbox: [],
   presence: [],
-  rooms: [],
-  sessions: [],
-  tasks: [],
   runtimeConnected: false,
   lastRuntimeEventAt: null,
   worldActorsById: new Map()
 };
-
-const TASK_EVENT_TYPES = new Set([
-  "task_created",
-  "task_updated",
-  "task_assigned",
-  "task_progress_updated",
-  "task_completed",
-  "task_handoff"
-]);
 
 const PRESENCE_EVENT_TYPES = new Set([
   "agent_entered",
@@ -101,15 +64,6 @@ const PRESENCE_EVENT_TYPES = new Set([
   "status_changed",
   "presence_heartbeat"
 ]);
-
-const ROOM_EVENT_TYPES = new Set([
-  "room_created",
-  "room_updated",
-  "table_session_created",
-  "table_session_updated",
-  "table_session_ended"
-]);
-
 
 const WORLD_EVENT_TYPES = new Set([
   "agent_entered",
@@ -129,21 +83,11 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
-function makeIdempotencyKey(prefix = "agentcafe-ui") {
-  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
-    return `${prefix}-${globalThis.crypto.randomUUID()}`;
-  }
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 async function api(path, options = {}) {
   const method = options.method || "GET";
   const headers = {};
   if (options.body !== undefined) {
     headers["content-type"] = "application/json";
-  }
-  if (options.idempotencyKey) {
-    headers["idempotency-key"] = options.idempotencyKey;
   }
   if (options.headers && typeof options.headers === "object") {
     Object.assign(headers, options.headers);
@@ -414,47 +358,17 @@ function renderChats(chats) {
     const text = document.createTextNode(chat.text);
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `${formatTime(chat.saidAt)}${chat.threadId ? ` | thread ${chat.threadId}` : ""}`;
+    meta.textContent = formatTime(chat.saidAt);
     li.append(actor, text, meta);
     chatList.appendChild(li);
   }
 }
 
-function inboxSummary(item) {
-  if (item.topic === "mention") {
-    return `mentioned in thread ${item.threadId || "n/a"}`;
-  }
-  if (item.topic === "task") {
-    return `task assigned: ${item.payload?.taskId || "unknown"}`;
-  }
-  if (item.topic === "handoff") {
-    return `handoff ${item.payload?.action || "update"}: ${item.payload?.taskId || "unknown"}`;
-  }
-  if (item.topic === "operator") {
-    return `operator: ${item.payload?.action || "update"}`;
-  }
-  return item.sourceEventType || "event";
-}
-
-function renderInbox(items) {
-  inboxList.innerHTML = "";
-  for (const item of items) {
-    const li = document.createElement("li");
-    const title = document.createElement("strong");
-    title.textContent = `${item.actorId} <- ${item.topic}`;
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = `${inboxSummary(item)} at ${formatTime(item.createdAt)}`;
-    li.append(title, meta);
-    inboxList.appendChild(li);
-  }
-}
-
-function renderPresenceInto(target, rows) {
-  if (!target) {
+function renderPresence(rows) {
+  if (!presenceListFooter) {
     return;
   }
-  target.innerHTML = "";
+  presenceListFooter.innerHTML = "";
   for (const item of rows) {
     const li = document.createElement("li");
     const title = document.createElement("strong");
@@ -464,82 +378,9 @@ function renderPresenceInto(target, rows) {
     meta.className = "meta";
     meta.textContent = `last heartbeat ${formatTime(item.lastHeartbeatAt || item.updatedAt)}`;
     li.append(title, meta);
-    target.appendChild(li);
+    presenceListFooter.appendChild(li);
   }
 }
-
-function renderPresence(rows) {
-  renderPresenceInto(presenceListFooter, rows);
-}
-
-function renderTasks(rows) {
-  taskList.innerHTML = "";
-  for (const task of rows) {
-    const li = document.createElement("li");
-    const title = document.createElement("strong");
-    title.textContent = `${task.title} [${task.state}] ${task.progress}%`;
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = `assignee ${task.assigneeActorId || "unassigned"} | updated ${formatTime(task.updatedAt)}`;
-    li.append(title, meta);
-    taskList.appendChild(li);
-  }
-}
-
-function updateRoomModeText() {
-  if (!roomModeText) {
-    return;
-  }
-  const focusedRoom =
-    runtimeState.rooms.find((room) => room.roomId === RUNTIME.roomId) || {
-      roomId: RUNTIME.roomId,
-      roomType: RUNTIME.roomId === "main" ? "lobby" : "unknown",
-      ownerActorId: null
-    };
-  const activeSessions = runtimeState.sessions.filter(
-    (session) => session.roomId === RUNTIME.roomId && session.status === "active"
-  ).length;
-  const ownerLabel = focusedRoom.ownerActorId ? ` | owner ${focusedRoom.ownerActorId}` : "";
-  roomModeText.textContent =
-    `Room mode: ${focusedRoom.roomType} (${focusedRoom.roomId})` + `${ownerLabel} | active sessions ${activeSessions}`;
-}
-
-function renderRooms(rooms) {
-  roomList.innerHTML = "";
-  for (const room of rooms) {
-    const li = document.createElement("li");
-    if (room.roomId === RUNTIME.roomId) {
-      li.classList.add("is-focused");
-    }
-    const title = document.createElement("strong");
-    title.textContent = `${room.roomId} [${room.roomType}]`;
-    const owner = room.ownerActorId || "none";
-    const updatedAt = room.updatedAt || room.createdAt;
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent = `owner ${owner} | updated ${formatTime(updatedAt)}`;
-    li.append(title, meta);
-    roomList.appendChild(li);
-  }
-}
-
-function renderSessions(sessions) {
-  sessionList.innerHTML = "";
-  for (const session of sessions) {
-    const li = document.createElement("li");
-    const title = document.createElement("strong");
-    const shortId = String(session.sessionId || "").slice(0, 8);
-    title.textContent = `${shortId} ${session.status} (${session.roomId})`;
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    meta.textContent =
-      `owner ${session.ownerActorId || "unknown"} | expires ${formatTime(session.expiresAt)} | ` +
-      `$${Number(session.paymentAmountUsd || 0).toFixed(2)}`;
-    li.append(title, meta);
-    sessionList.appendChild(li);
-  }
-}
-
 
 function parseStreamData(event) {
   try {
@@ -558,12 +399,7 @@ function toRuntimeChat(event) {
     eventId: event.eventId,
     actorId: event.actorId || "agent",
     text,
-    saidAt: event.timestamp || new Date().toISOString(),
-    threadId:
-      event?.payload?.conversation?.threadId ||
-      event?.payload?.conversation?.messageId ||
-      event?.payload?.threadId ||
-      null
+    saidAt: event.timestamp || new Date().toISOString()
   };
 }
 
@@ -587,48 +423,6 @@ function setRuntimeStatus(text) {
   if (runtimeStatus) {
     runtimeStatus.textContent = text;
   }
-}
-
-function setSessionFeedback(text, { error = false } = {}) {
-  if (!sessionFeedback) {
-    return;
-  }
-  sessionFeedback.textContent = text;
-  sessionFeedback.classList.toggle("is-error", error);
-}
-
-function parseCsvList(value) {
-  return Array.from(
-    new Set(
-      String(value || "")
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean)
-    )
-  );
-}
-
-function activateRailTab(tabName) {
-  for (const button of railTabButtons) {
-    const isActive = button.dataset.railTab === tabName;
-    button.classList.toggle("is-active", isActive);
-  }
-  for (const panel of railTabPanels) {
-    const isActive = panel.dataset.railPanel === tabName;
-    panel.classList.toggle("is-active", isActive);
-  }
-}
-
-function bindRailTabs() {
-  if (railTabButtons.length === 0 || railTabPanels.length === 0) {
-    return;
-  }
-  railTabButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      activateRailTab(button.dataset.railTab || "chat");
-    });
-  });
-  activateRailTab("chat");
 }
 
 function debounce(fn, waitMs) {
@@ -904,103 +698,22 @@ async function refreshRuntimeOrders() {
   renderOrders(runtimeState.orders);
 }
 
-async function refreshRuntimeInbox() {
-  const path =
-    `/v1/inbox?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
-    `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
-    `&unreadOnly=true&order=desc&limit=${RUNTIME.inboxLimit}`;
-  const payload = await api(path);
-  runtimeState.inbox = payload?.data?.items || [];
-  renderInbox(runtimeState.inbox);
-}
-
 async function refreshRuntimePresence() {
   const path =
     `/v1/presence?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
-    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&limit=${RUNTIME.presenceLimit}`;
+    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&limit=100`;
   const payload = await api(path);
   runtimeState.presence = payload?.data?.presence || [];
   renderPresence(runtimeState.presence);
 }
 
-async function refreshRuntimeTasks() {
-  const path =
-    `/v1/tasks?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
-    `&roomId=${encodeURIComponent(RUNTIME.roomId)}&limit=${RUNTIME.taskLimit}`;
-  const payload = await api(path);
-  runtimeState.tasks = payload?.data?.tasks || [];
-  renderTasks(runtimeState.tasks);
-}
-
-async function refreshRuntimeRooms() {
-  const path = `/v1/rooms?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&limit=${RUNTIME.roomLimit}`;
-  const payload = await api(path);
-  runtimeState.rooms = payload?.data?.rooms || [];
-  renderRooms(runtimeState.rooms);
-  updateRoomModeText();
-}
-
-async function refreshRuntimeSessions() {
-  const path = `/v1/table-sessions?tenantId=${encodeURIComponent(RUNTIME.tenantId)}&limit=${RUNTIME.sessionLimit}`;
-  const payload = await api(path);
-  runtimeState.sessions = payload?.data?.sessions || [];
-  renderSessions(runtimeState.sessions);
-  updateRoomModeText();
-}
-
-
-async function refreshRuntimePanels() {
-  const results = await Promise.allSettled([
-    refreshRuntimeChats(),
-    refreshRuntimeOrders(),
-    refreshRuntimeInbox(),
-    refreshRuntimePresence(),
-    refreshRuntimeTasks(),
-    refreshRuntimeRooms(),
-    refreshRuntimeSessions()
-  ]);
-  const rejected = results.find((item) => item.status === "rejected");
-  if (rejected && rejected.reason) {
-    throw rejected.reason;
-  }
-}
-
-const refreshRuntimeInboxDebounced = debounce(() => {
-  refreshRuntimeInbox().catch((error) => {
-    setRuntimeStatus(error instanceof Error ? error.message : String(error));
-  });
-}, 250);
-
-const refreshRuntimeTasksDebounced = debounce(() => {
-  refreshRuntimeTasks().catch((error) => {
-    setRuntimeStatus(error instanceof Error ? error.message : String(error));
-  });
-}, 250);
-
 const refreshRuntimePresenceDebounced = debounce(() => {
-  refreshRuntimePresence().catch((error) => {
-    setRuntimeStatus(error instanceof Error ? error.message : String(error));
-  });
+  refreshRuntimePresence().catch(() => {});
 }, 250);
 
 const refreshRuntimeOrdersDebounced = debounce(() => {
-  refreshRuntimeOrders().catch((error) => {
-    setRuntimeStatus(error instanceof Error ? error.message : String(error));
-  });
+  refreshRuntimeOrders().catch(() => {});
 }, 250);
-
-const refreshRuntimeRoomsDebounced = debounce(() => {
-  refreshRuntimeRooms().catch((error) => {
-    setRuntimeStatus(error instanceof Error ? error.message : String(error));
-  });
-}, 250);
-
-const refreshRuntimeSessionsDebounced = debounce(() => {
-  refreshRuntimeSessions().catch((error) => {
-    setRuntimeStatus(error instanceof Error ? error.message : String(error));
-  });
-}, 250);
-
 
 function handleRuntimeEvent(data) {
   runtimeState.lastRuntimeEventAt = Date.now();
@@ -1034,28 +747,9 @@ function handleRuntimeEvent(data) {
     return;
   }
 
-  if (
-    data.type === "mention_created" ||
-    data.type === "task_assigned" ||
-    data.type === "task_handoff" ||
-    data.type === "operator_override_applied"
-  ) {
-    refreshRuntimeInboxDebounced();
-  }
-
-  if (TASK_EVENT_TYPES.has(data.type)) {
-    refreshRuntimeTasksDebounced();
-  }
-
   if (PRESENCE_EVENT_TYPES.has(data.type)) {
     refreshRuntimePresenceDebounced();
   }
-
-  if (ROOM_EVENT_TYPES.has(data.type)) {
-    refreshRuntimeRoomsDebounced();
-    refreshRuntimeSessionsDebounced();
-  }
-
 }
 
 function connectRuntimeStream() {
@@ -1065,36 +759,22 @@ function connectRuntimeStream() {
 
   source.addEventListener("ready", () => {
     runtimeState.runtimeConnected = true;
-    setRuntimeStatus(`Runtime stream live in room ${RUNTIME.roomId}. All agents are rendered live.`);
+    setRuntimeStatus(`Live in room ${RUNTIME.roomId}`);
   });
 
   source.addEventListener("heartbeat", () => {
     runtimeState.lastRuntimeEventAt = Date.now();
-    setRuntimeStatus(`Runtime stream live in room ${RUNTIME.roomId}. All agents are rendered live.`);
   });
 
   const eventTypes = [
     "order_changed",
     "conversation_message_posted",
-    "mention_created",
-    "task_created",
-    "task_updated",
-    "task_assigned",
-    "task_progress_updated",
-    "task_completed",
-    "task_handoff",
-    "operator_override_applied",
     "agent_entered",
     "agent_left",
     "actor_moved",
     "intent_completed",
     "status_changed",
-    "presence_heartbeat",
-    "room_created",
-    "room_updated",
-    "table_session_created",
-    "table_session_updated",
-    "table_session_ended"
+    "presence_heartbeat"
   ];
 
   for (const eventType of eventTypes) {
@@ -1108,7 +788,7 @@ function connectRuntimeStream() {
 
   source.onerror = () => {
     runtimeState.runtimeConnected = false;
-    setRuntimeStatus("Runtime stream reconnecting...");
+    setRuntimeStatus("Reconnecting...");
   };
 
   return source;
@@ -1122,174 +802,15 @@ function reconnectRuntimeStream() {
   runtimeStreamSource = connectRuntimeStream();
 }
 
-async function focusRoom(roomIdInput) {
-  const nextRoomId = String(roomIdInput || "").trim() || "main";
-  if (focusRoomInput) {
-    focusRoomInput.value = nextRoomId;
-  }
-  if (RUNTIME.roomId === nextRoomId && runtimeState.runtimeConnected) {
-    return;
-  }
-  RUNTIME.roomId = nextRoomId;
-  runtimeState.chatEventIds.clear();
-  runtimeState.orderEventIds.clear();
-  runtimeState.worldActorsById = new Map();
-  setRuntimeStatus(`Switching runtime room to ${RUNTIME.roomId}...`);
-  updateRoomModeText();
-  await refreshRuntimePanels();
-  await refreshRuntimeWorld();
-  reconnectRuntimeStream();
-  setSessionFeedback(`Focused room ${RUNTIME.roomId}.`);
-}
-
-async function openPrivateTable() {
-  const roomId = String(tableRoomInput?.value || "").trim();
-  const ownerActorId = String(tableOwnerInput?.value || "").trim();
-  if (!roomId) {
-    throw new Error("Private table id is required");
-  }
-  if (!ownerActorId) {
-    throw new Error("Owner actor is required");
-  }
-  const invitedActorIds = parseCsvList(tableInvitesInput?.value || "").filter((actorId) => actorId !== ownerActorId);
-  const durationMinutes = clamp(Number(tableDurationInput?.value || 90), 5, 1440);
-  const planId =
-    durationMinutes <= 30
-      ? "espresso"
-      : durationMinutes <= 90
-        ? "cappuccino"
-        : durationMinutes <= 240
-          ? "americano"
-          : "decaf_night_shift";
-  const planPriceUsd = planId === "espresso" ? 3 : planId === "cappuccino" ? 6 : planId === "americano" ? 10 : 15;
-  const paymentAmountUsd = Math.max(Number(RUNTIME.privateTablePriceUsd || 0), planPriceUsd);
-  const paymentProof = String(paymentProofInput?.value || "").trim() || "coffee_paid";
-
-  await api("/v1/rooms", {
-    method: "POST",
-    idempotencyKey: makeIdempotencyKey("room-upsert"),
-    body: {
-      tenantId: RUNTIME.tenantId,
-      roomId,
-      actorId: ownerActorId,
-      roomType: "private_table",
-      ownerActorId,
-      paymentProof,
-      paymentAmountUsd
-    }
-  });
-
-  const payload = await api("/v1/table-sessions", {
-    method: "POST",
-    idempotencyKey: makeIdempotencyKey("table-session"),
-    body: {
-      tenantId: RUNTIME.tenantId,
-      actorId: ownerActorId,
-      ownerActorId,
-      roomId,
-      planId,
-      invitedActorIds,
-      paymentProof,
-      paymentAmountUsd
-    }
-  });
-
-  await refreshRuntimeRooms();
-  await refreshRuntimeSessions();
-  await focusRoom(roomId);
-
-  const sessionId = payload?.data?.session?.sessionId || "unknown";
-  setSessionFeedback(`Private table opened (${roomId}), session ${sessionId}.`);
-}
-
-async function exportTranscript() {
-  const payload = await api(
-    `/v1/timeline?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
-      `&roomId=${encodeURIComponent(RUNTIME.roomId)}` +
-      `&order=desc&limit=${RUNTIME.timelineExportLimit}`
-  );
-  const events = payload?.data?.events || [];
-  const blob = new Blob(
-    [
-      JSON.stringify(
-        {
-          exportedAt: new Date().toISOString(),
-          tenantId: RUNTIME.tenantId,
-          roomId: RUNTIME.roomId,
-          count: events.length,
-          events
-        },
-        null,
-        2
-      )
-    ],
-    { type: "application/json" }
-  );
-  const href = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = href;
-  link.download = `agentcafe-transcript-${RUNTIME.roomId}-${Date.now()}.json`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(href);
-  setSessionFeedback(`Transcript exported (${events.length} events).`);
-}
-
-function bindSessionControls() {
-  focusRoomBtn?.addEventListener("click", () => {
-    void focusRoom(focusRoomInput?.value || "main").catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      setSessionFeedback(message, { error: true });
-      setRuntimeStatus(message);
-    });
-  });
-
-  focusRoomInput?.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") {
-      return;
-    }
-    event.preventDefault();
-    void focusRoom(focusRoomInput.value).catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      setSessionFeedback(message, { error: true });
-      setRuntimeStatus(message);
-    });
-  });
-
-  openTableBtn?.addEventListener("click", () => {
-    setSessionFeedback("Opening private table...");
-    void openPrivateTable().catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      setSessionFeedback(message, { error: true });
-      setRuntimeStatus(message);
-    });
-  });
-
-  exportTranscriptBtn?.addEventListener("click", () => {
-    setSessionFeedback("Exporting transcript...");
-    void exportTranscript().catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      setSessionFeedback(message, { error: true });
-      setRuntimeStatus(message);
-    });
-  });
-}
-
 async function boot() {
-  bindRailTabs();
-  bindSessionControls();
-  if (focusRoomInput) {
-    focusRoomInput.value = RUNTIME.roomId;
-  }
-  if (tableRoomInput && !tableRoomInput.value.trim()) {
-    tableRoomInput.value = `private-${Date.now().toString(36).slice(-6)}`;
-  }
-
   renderMenu(MENU);
 
   try {
-    await refreshRuntimePanels();
+    await Promise.allSettled([
+      refreshRuntimeChats(),
+      refreshRuntimeOrders(),
+      refreshRuntimePresence()
+    ]);
     await refreshRuntimeWorld();
   } catch (error) {
     setRuntimeStatus(error instanceof Error ? error.message : String(error));
@@ -1301,8 +822,6 @@ async function boot() {
     if (!runtimeState.runtimeConnected) {
       return;
     }
-    void refreshRuntimeInbox().catch(() => {});
-    void refreshRuntimeTasks().catch(() => {});
     void refreshRuntimePresence().catch(() => {});
   }, 15000);
 
@@ -1323,28 +842,13 @@ async function boot() {
   }, WORLD_RESYNC_IDLE_MS);
 
   setInterval(() => {
-    void refreshRuntimeRooms().catch(() => {});
-    void refreshRuntimeSessions().catch(() => {});
-  }, 30000);
-
-  setInterval(() => {
     sweepWorldBubbles();
   }, 1000);
 }
 
 boot().catch((error) => {
-  ordersList.innerHTML = "";
-  chatList.innerHTML = "";
-  inboxList.innerHTML = "";
-  if (presenceListFooter) {
-    presenceListFooter.innerHTML = "";
-  }
-  taskList.innerHTML = "";
-  roomList.innerHTML = "";
-  sessionList.innerHTML = "";
   const li = document.createElement("li");
   li.textContent = error instanceof Error ? error.message : String(error);
   ordersList.appendChild(li);
   setRuntimeStatus(li.textContent);
-  setSessionFeedback(li.textContent, { error: true });
 });

@@ -197,3 +197,23 @@ test("ACF-603 deterministic replay: windowed replay remains deterministic and bo
   assert.ok(!chatTexts.includes("Old timeline entry"));
   assert.equal(first.messages.some((item) => item.text === "Different room"), false);
 });
+
+test("ACF-603 deterministic replay: enter payload position is projected onto actor state", () => {
+  const positioned = replay([
+    event({
+      sequence: 1,
+      eventId: "00000000-0000-4000-8000-00000000aa01",
+      actorId: "Nova",
+      type: "agent_entered",
+      timestamp: "2026-02-14T11:00:00.000Z",
+      payload: {
+        position: { x: 7, y: 4 }
+      }
+    })
+  ]);
+
+  assert.equal(positioned.actors.length, 1);
+  assert.equal(positioned.actors[0].actorId, "Nova");
+  assert.equal(positioned.actors[0].x, 7);
+  assert.equal(positioned.actors[0].y, 4);
+});

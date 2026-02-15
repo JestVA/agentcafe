@@ -473,6 +473,12 @@ const TABLE_SESSION_STATUS_VALUES = new Set(["active", "ended"]);
 const MOVE_DIRECTIONS = new Set(["N", "S", "E", "W"]);
 const THEME_FIELDS = ["bubbleColor", "textColor", "accentColor"];
 const THEME_COLOR_RE = /^#(?:[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const WORLD_GRID_BOUNDS = Object.freeze({
+  minX: 0,
+  maxX: 19,
+  minY: 0,
+  maxY: 11
+});
 
 function capabilityForEventType(type) {
   if (type === EVENT_TYPES.MOVE) {
@@ -547,6 +553,83 @@ function parseBoundedSteps(value, { field = "steps", min = 1, max = 50, fallback
     });
   }
   return rounded;
+}
+
+function normalizeGridPosition(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  const nx = Math.max(WORLD_GRID_BOUNDS.minX, Math.min(WORLD_GRID_BOUNDS.maxX, Math.round(x)));
+  const ny = Math.max(WORLD_GRID_BOUNDS.minY, Math.min(WORLD_GRID_BOUNDS.maxY, Math.round(y)));
+  return { x: nx, y: ny };
+}
+
+function positionKey({ x, y }) {
+  return `${x}:${y}`;
+}
+
+function findFirstAvailableGridPosition(occupied) {
+  for (let y = WORLD_GRID_BOUNDS.minY; y <= WORLD_GRID_BOUNDS.maxY; y += 1) {
+    for (let x = WORLD_GRID_BOUNDS.minX; x <= WORLD_GRID_BOUNDS.maxX; x += 1) {
+      const key = `${x}:${y}`;
+      if (!occupied.has(key)) {
+        return { x, y };
+      }
+    }
+  }
+  return {
+    x: Math.floor((WORLD_GRID_BOUNDS.minX + WORLD_GRID_BOUNDS.maxX) / 2),
+    y: Math.floor((WORLD_GRID_BOUNDS.minY + WORLD_GRID_BOUNDS.maxY) / 2)
+  };
+}
+
+async function resolveEnterPosition({ tenantId, roomId, actorId, payload }) {
+  const requested = normalizeGridPosition(payload?.position);
+  if (requested) {
+    return requested;
+  }
+
+  // Build a current room view and place newly-entering actors into an empty cell.
+  // Limit is intentionally bounded to keep join latency predictable.
+  const events = await eventStore.list({
+    tenantId,
+    roomId,
+    limit: 5000,
+    order: "asc"
+  });
+  const projection = new ProjectionState();
+  for (const item of events) {
+    projection.apply(item);
+  }
+  const snapshot = projection.snapshot(tenantId, roomId);
+
+  const existing = snapshot.actors.find((item) => item.actorId === actorId);
+  const existingPosition = normalizeGridPosition(existing);
+  if (existingPosition) {
+    return existingPosition;
+  }
+
+  const occupied = new Set();
+  for (const item of snapshot.actors) {
+    if (!item || item.actorId === actorId) {
+      continue;
+    }
+    const inactive = String(item.status || "").toLowerCase() === "inactive";
+    if (inactive) {
+      continue;
+    }
+    const pos = normalizeGridPosition(item);
+    if (pos) {
+      occupied.add(positionKey(pos));
+    }
+  }
+
+  return findFirstAvailableGridPosition(occupied);
 }
 
 function parseProfileTheme(value, { field = "theme", partial = false } = {}) {
@@ -1992,7 +2075,26 @@ async function handleCommand(req, res, url, requestId, rateHeaders) {
       traceCorrelationId: trace.correlationId
     });
 
-    const payload = buildPayload(route.type, body);
+    let payload = buildPayload(route.type, body);
+    if (route.type === EVENT_TYPES.ENTER) {
+      const position = await resolveEnterPosition({
+        tenantId,
+        roomId,
+        actorId,
+        payload
+      });
+      payload = {
+        ...payload,
+        position
+      };
+      planner.setPosition({
+        tenantId,
+        roomId,
+        actorId,
+        x: position.x,
+        y: position.y
+      });
+    }
     enforceModeration({
       tenantId,
       roomId,

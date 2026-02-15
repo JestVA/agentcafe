@@ -47,6 +47,12 @@ export class ProjectionState {
 
     if (event.type === "agent_entered") {
       actor.status = "busy";
+      const px = Number(event.payload?.position?.x);
+      const py = Number(event.payload?.position?.y);
+      if (Number.isFinite(px) && Number.isFinite(py)) {
+        actor.x = Math.round(px);
+        actor.y = Math.round(py);
+      }
     } else if (event.type === "agent_left") {
       room.actors.delete(actorId);
     } else if (event.type === "actor_moved") {

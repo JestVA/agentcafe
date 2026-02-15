@@ -82,15 +82,45 @@ function touchActor(actor, now = nowMs()) {
   actor.lastActiveAt = now;
 }
 
+function findEmptySpawnCell() {
+  const occupied = new Set();
+  for (const actor of actors.values()) {
+    if (!actor?.inCafe) {
+      continue;
+    }
+    const x = Number(actor.x);
+    const y = Number(actor.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    occupied.add(`${Math.round(x)}:${Math.round(y)}`);
+  }
+
+  for (let y = 0; y < GRID_HEIGHT; y += 1) {
+    for (let x = 0; x < GRID_WIDTH; x += 1) {
+      const key = `${x}:${y}`;
+      if (!occupied.has(key)) {
+        return { x, y };
+      }
+    }
+  }
+
+  return {
+    x: Math.floor(GRID_WIDTH / 2),
+    y: Math.floor(GRID_HEIGHT / 2)
+  };
+}
+
 function ensureActor(actorId = DEFAULT_ACTOR_ID) {
   const id = String(actorId || DEFAULT_ACTOR_ID);
   const now = nowMs();
   let actor = actors.get(id);
   if (!actor) {
+    const spawn = findEmptySpawnCell();
     actor = {
       id,
-      x: Math.floor(GRID_WIDTH / 2),
-      y: Math.floor(GRID_HEIGHT / 2),
+      x: spawn.x,
+      y: spawn.y,
       enteredAt: now,
       lastActiveAt: now,
       inCafe: true,

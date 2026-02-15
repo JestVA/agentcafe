@@ -65,15 +65,28 @@ export class CafeListener extends EventEmitter {
 
   async _bootstrap() {
     let attempts = 0;
-    while (true) {
-      const { status, headers, data } = await this.client.rawFetch("/v1/bootstrap", {
-        query: {
-          actorId: this.actorId,
-          tenantId: this.tenantId,
-          roomId: this.roomId
-        },
-        signal: this._abortController?.signal
-      });
+    while (this._running) {
+      let status = 0;
+      let headers = null;
+      let data = null;
+      try {
+        ({ status, headers, data } = await this.client.rawFetch("/v1/bootstrap", {
+          query: {
+            actorId: this.actorId,
+            tenantId: this.tenantId,
+            roomId: this.roomId
+          },
+          signal: this._abortController?.signal
+        }));
+      } catch (err) {
+        if (!this._running || err?.name === "AbortError") {
+          return;
+        }
+        attempts++;
+        this.emit("error", err);
+        await this._backoff(attempts);
+        continue;
+      }
 
       if (status === 200) {
         this._resolvedRoomId =
@@ -127,8 +140,9 @@ export class CafeListener extends EventEmitter {
     let consecutive502 = 0;
 
     while (this._running) {
-      const { status, data } = await this.client
-        .rawFetch("/v1/events/poll", {
+      let response = null;
+      try {
+        response = await this.client.rawFetch("/v1/events/poll", {
           query: {
             actorId: this.actorId,
             tenantId: this.tenantId,
@@ -139,14 +153,21 @@ export class CafeListener extends EventEmitter {
             types: this.types.join(",")
           },
           signal: this._abortController?.signal
-        })
-        .catch((err) => {
-          // AbortError when stop() is called
-          if (!this._running) return { status: 0, data: null };
-          throw err;
         });
+      } catch (err) {
+        if (!this._running || err?.name === "AbortError") {
+          break;
+        }
+        failures++;
+        consecutive502 = 0;
+        this.emit("error", err);
+        await this._backoff(failures);
+        continue;
+      }
 
       if (!this._running) break;
+      if (!response) continue;
+      const { status, data } = response;
 
       if (status === 200) {
         const events = data?.data?.events || [];

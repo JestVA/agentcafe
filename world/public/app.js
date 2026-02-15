@@ -230,56 +230,104 @@ function drawSpeechBubble(actor, cx, cy) {
 
   const lines = wrapText(actor.bubble.text);
   const longest = Math.max(...lines.map((line) => line.length), 8);
-  const width = clamp(longest * 7 + 24, 130, 260);
-  const height = 16 + lines.length * 15;
-  const x = clamp(cx - width / 2, 4, canvas.width - width - 4);
-  const y = clamp(cy - 96, 4, canvas.height - height - 12);
+  const width = clamp(longest * 7.5 + 28, 140, 270);
+  const lineH = 17;
+  const padY = 10;
+  const height = padY * 2 + lines.length * lineH;
+  const tailH = 8;
+  const margin = 6;
 
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#b9a486";
-  ctx.lineWidth = 1.5;
+  const x = clamp(cx - width / 2, margin, canvas.width - width - margin);
+
+  // Decide whether bubble goes above or below the actor
+  const spaceAbove = cy - CELL / 2;
+  const neededAbove = height + tailH + 8;
+  const above = spaceAbove >= neededAbove;
+
+  let y;
+  if (above) {
+    y = cy - CELL / 2 - tailH - height - 4;
+  } else {
+    y = cy + CELL / 2 + tailH + 4;
+  }
+  y = clamp(y, margin, canvas.height - height - margin);
+
+  // Shadow
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.10)";
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 2;
+
+  // Bubble fill
+  ctx.fillStyle = "#1a1a1a";
   ctx.beginPath();
-  ctx.roundRect(x, y, width, height, 10);
+  ctx.roundRect(x, y, width, height, 8);
   ctx.fill();
-  ctx.stroke();
+  ctx.restore();
 
+  // Tail pointer
+  const tailX = clamp(cx, x + 14, x + width - 14);
+  ctx.fillStyle = "#1a1a1a";
   ctx.beginPath();
-  ctx.moveTo(cx - 6, y + height);
-  ctx.lineTo(cx + 2, y + height + 9);
-  ctx.lineTo(cx + 8, y + height);
+  if (above) {
+    ctx.moveTo(tailX - 5, y + height);
+    ctx.lineTo(tailX, y + height + tailH);
+    ctx.lineTo(tailX + 5, y + height);
+  } else {
+    ctx.moveTo(tailX - 5, y);
+    ctx.lineTo(tailX, y - tailH);
+    ctx.lineTo(tailX + 5, y);
+  }
   ctx.closePath();
   ctx.fill();
-  ctx.stroke();
 
-  ctx.fillStyle = "#2f241d";
-  ctx.font = "13px Avenir Next, sans-serif";
+  // Text
+  ctx.fillStyle = "#f0f0f0";
+  ctx.font = "500 13px 'Avenir Next', system-ui, sans-serif";
   lines.forEach((line, index) => {
-    ctx.fillText(line, x + 10, y + 16 + index * 15);
+    ctx.fillText(line, x + 12, y + padY + 13 + index * lineH);
   });
 
-  return y;
+  return { top: y, bottom: y + height, above };
 }
 
-function drawNameLabel(actorId, cx, cy, bubbleTopY = null) {
+function drawNameLabel(actorId, cx, cy, bubbleInfo = null) {
   const label = String(actorId || "agent");
 
-  ctx.font = "12px Avenir Next, sans-serif";
+  ctx.font = "600 11px 'Avenir Next', system-ui, sans-serif";
   const textWidth = ctx.measureText(label).width;
   const boxWidth = textWidth + 14;
   const boxHeight = 18;
-  const x = clamp(cx - boxWidth / 2, 4, canvas.width - boxWidth - 4);
-  const preferredY = bubbleTopY == null ? cy - 44 : bubbleTopY - boxHeight - 6;
-  const y = clamp(preferredY, 4, canvas.height - boxHeight - 4);
+  const margin = 6;
+  const x = clamp(cx - boxWidth / 2, margin, canvas.width - boxWidth - margin);
+  let preferredY;
+  if (bubbleInfo == null) {
+    preferredY = cy - 44;
+  } else if (bubbleInfo.above) {
+    preferredY = bubbleInfo.top - boxHeight - 4;
+  } else {
+    preferredY = cy - CELL / 2 - boxHeight - 4;
+  }
+  const y = clamp(preferredY, margin, canvas.height - boxHeight - margin);
 
-  ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
-  ctx.strokeStyle = "#c5b396";
-  ctx.lineWidth = 1;
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.08)";
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 1;
+  ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
   ctx.beginPath();
   ctx.roundRect(x, y, boxWidth, boxHeight, 9);
   ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.10)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(x, y, boxWidth, boxHeight, 9);
   ctx.stroke();
 
-  ctx.fillStyle = "#2f241d";
+  ctx.fillStyle = "#333";
   ctx.textBaseline = "middle";
   ctx.fillText(label, x + 7, y + boxHeight / 2 + 0.5);
   ctx.textBaseline = "alphabetic";
@@ -295,8 +343,8 @@ function drawActor(actor) {
   const color = colorFromId(actor.id);
 
   drawStickmanWithCoffee(cx, cy, color);
-  const bubbleTop = drawSpeechBubble(actor, cx, cy);
-  drawNameLabel(actor.id, cx, cy, bubbleTop);
+  const bubbleInfo = drawSpeechBubble(actor, cx, cy);
+  drawNameLabel(actor.id, cx, cy, bubbleInfo);
 }
 
 function render() {

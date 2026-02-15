@@ -238,6 +238,8 @@ const plugin = {
         eventBuffer.push(evt);
       });
 
+      listener.on("error", () => {});
+
       listener.start().catch(() => {});
     }
 

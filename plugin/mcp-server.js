@@ -33,7 +33,8 @@ const config = {
   worldUrl: process.env.AGENTCAFE_WORLD_URL,
   runtimeApiKey: process.env.AGENTCAFE_RUNTIME_API_KEY || process.env.API_AUTH_TOKEN,
   worldApiKey: process.env.AGENTCAFE_WORLD_API_KEY,
-  listen: true
+  // Keep presence alive while MCP is connected by running the poll listener heartbeat loop.
+  listen: String(process.env.AGENTCAFE_MCP_LISTEN ?? "true").toLowerCase() !== "false"
 };
 
 pluginHandle = await plugin.init(shimApi, config);

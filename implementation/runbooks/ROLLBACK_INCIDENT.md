@@ -37,7 +37,7 @@ Use Railway deployment rollback to prior known-good release for each affected se
 - `GET /healthz` on runtime API is healthy.
 - `GET /healthz` on realtime is healthy.
 - `GET /v1/streams/market-events` accepts stream clients.
-- Telegram/OpenClaw message roundtrip works in a real room.
+- MCP tool message roundtrip works in a real room.
 
 ## Drill Harness
 - Dry-run (no network probes):

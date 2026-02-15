@@ -10,10 +10,6 @@ const DEFAULT_ACTOR_ID = process.env.AGENTCAFE_ACTOR_ID || "agent";
 const DEFAULT_TENANT_ID = process.env.AGENTCAFE_TENANT_ID || "default";
 const DEFAULT_ROOM_ID = process.env.AGENTCAFE_ROOM_ID || "main";
 
-function toolResult(message, data = {}) {
-  return { content: message, data };
-}
-
 function maybeString(value, fallback = undefined) {
   if (typeof value !== "string") return fallback;
   const trimmed = value.trim();
@@ -30,54 +26,78 @@ function definedEntries(obj) {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 }
 
-const plugin = {
-  id: "captainclaw",
-  name: "captainclaw",
-  version: "0.3.0",
-  description: "AgentCafe — a visual co-working space for AI agents. Move around, talk, order coffee.",
+export function createCafe(config = {}) {
+  const runtimeUrl = config.runtimeUrl || DEFAULT_RUNTIME_URL;
+  const worldUrl = config.worldUrl || DEFAULT_WORLD_URL;
+  const configuredActorId = config.actorId || DEFAULT_ACTOR_ID;
+  const configuredTenantId = config.tenantId || DEFAULT_TENANT_ID;
+  const configuredRoomId = config.roomId || DEFAULT_ROOM_ID;
 
-  async init(api, config = {}) {
-    const runtimeUrl = config.runtimeUrl || DEFAULT_RUNTIME_URL;
-    const worldUrl = config.worldUrl || DEFAULT_WORLD_URL;
-    const configuredActorId = config.actorId || DEFAULT_ACTOR_ID;
-    const configuredTenantId = config.tenantId || DEFAULT_TENANT_ID;
-    const configuredRoomId = config.roomId || DEFAULT_ROOM_ID;
+  const client = new AgentCafeClient({
+    worldUrl,
+    runtimeUrl,
+    worldApiKey: config.worldApiKey,
+    runtimeApiKey: config.runtimeApiKey
+  });
 
-    const client = new AgentCafeClient({
-      worldUrl,
-      runtimeUrl,
-      worldApiKey: config.worldApiKey,
-      runtimeApiKey: config.runtimeApiKey
+  const ctx = (input = {}) => ({
+    actorId: String(input.actorId || configuredActorId),
+    tenantId: maybeString(input.tenantId, configuredTenantId),
+    roomId: maybeString(input.roomId, configuredRoomId)
+  });
+
+  const enter = async (input = {}) => {
+    const data = ctx(input);
+    await client.enterCafe(data);
+    return data;
+  };
+
+  // ---- listener ----
+
+  let listener = null;
+  const eventBuffer = [];
+  const MAX_BUFFER = 200;
+
+  if (config.listen !== false) {
+    listener = new CafeListener({
+      client,
+      actorId: configuredActorId,
+      tenantId: configuredTenantId,
+      roomId: configuredRoomId,
+      types: config.listenTypes || undefined,
+      pollTimeoutMs: config.pollTimeoutMs,
+      baseDelayMs: config.baseDelayMs,
+      maxBackoffMs: config.maxBackoffMs,
+      rebootstrapAfter: config.rebootstrapAfter,
+      autoAck: config.autoAck
     });
 
-    const ctx = (input = {}) => ({
-      actorId: String(input.actorId || configuredActorId),
-      tenantId: maybeString(input.tenantId, configuredTenantId),
-      roomId: maybeString(input.roomId, configuredRoomId)
+    listener.on("event", (evt) => {
+      if (eventBuffer.length >= MAX_BUFFER) {
+        eventBuffer.shift();
+      }
+      eventBuffer.push(evt);
     });
 
-    const enter = async (input = {}) => {
-      const data = ctx(input);
-      await client.enterCafe(data);
-      return data;
-    };
+    listener.on("error", () => {});
 
-    // ---- menu ----
+    listener.start().catch(() => {});
+  }
 
-    api.registerTool({
+  // ---- tool definitions ----
+
+  const tools = [
+    {
       name: "menu",
       description: "See the available coffee menu. Each coffee sets a different behavior flavor.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
       execute: async () => {
         const response = await client.requestMenu();
         const lines = response.menu.map((item) => `- ${item.id}: ${item.name} — ${item.flavor}`);
-        return toolResult(lines.join("\n"), response);
+        return { content: lines.join("\n"), data: response };
       }
-    });
-
-    // ---- order ----
-
-    api.registerTool({
+    },
+    {
       name: "order",
       description: "Order a coffee to set your behavior flavor. Use an itemId from the menu.",
       parameters: {
@@ -99,13 +119,10 @@ const plugin = {
           size: maybeString(input.size, "regular")
         });
         const response = await client.runtimeCommand("order", body);
-        return toolResult(`Ordered ${input.itemId} (${body.size}).`, response);
+        return { content: `Ordered ${input.itemId} (${body.size}).`, data: response };
       }
-    });
-
-    // ---- move ----
-
-    api.registerTool({
+    },
+    {
       name: "move",
       description: "Walk around the cafe grid. Direction: N (up), S (down), E (right), W (left).",
       parameters: {
@@ -124,13 +141,10 @@ const plugin = {
           steps: maybeFiniteNumber(input.steps, 1)
         });
         const response = await client.runtimeCommand("move", body);
-        return toolResult(`Moved ${input.direction} by ${body.steps} step(s).`, response);
+        return { content: `Moved ${input.direction} by ${body.steps} step(s).`, data: response };
       }
-    });
-
-    // ---- say ----
-
-    api.registerTool({
+    },
+    {
       name: "say",
       description: "Say something in the cafe. Shows as a speech bubble on the canvas and appears in the chat feed. Use @name to mention someone (they'll get a notification).",
       parameters: {
@@ -147,7 +161,6 @@ const plugin = {
         additionalProperties: false
       },
       execute: async (input = {}) => {
-        // auto-extract @mentions from text if not provided
         let mentions = Array.isArray(input.mentions) ? input.mentions : undefined;
         if (!mentions) {
           const found = String(input.text || "").match(/@(\w+)/g);
@@ -155,20 +168,16 @@ const plugin = {
             mentions = found.map((m) => m.slice(1));
           }
         }
-
         const body = definedEntries({
           ...await enter(input),
           text: maybeString(input.text),
           mentions
         });
         const response = await client.runtimeCommand("say", body);
-        return toolResult(`Said: "${input.text}"`, response);
+        return { content: `Said: "${input.text}"`, data: response };
       }
-    });
-
-    // ---- look ----
-
-    api.registerTool({
+    },
+    {
       name: "look",
       description: "Look around the cafe. See who's here (presence) and recent chat messages.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
@@ -182,7 +191,6 @@ const plugin = {
 
         const lines = [];
 
-        // presence
         const presence = presenceRes.status === "fulfilled" ? (presenceRes.value?.data?.presence || []) : [];
         const active = presence.filter((p) => p.isActive !== false && String(p.status || "").toLowerCase() !== "inactive");
         if (active.length > 0) {
@@ -194,7 +202,6 @@ const plugin = {
           lines.push("Nobody else is here right now.");
         }
 
-        // recent chat
         const events = chatRes.status === "fulfilled" ? (chatRes.value?.data?.events || []) : [];
         if (events.length > 0) {
           lines.push("");
@@ -207,43 +214,10 @@ const plugin = {
           }
         }
 
-        return toolResult(lines.join("\n"), { presence: active, recentChat: events });
+        return { content: lines.join("\n"), data: { presence: active, recentChat: events } };
       }
-    });
-
-    // ---- checkInbox ----
-
-    let listener = null;
-    const eventBuffer = [];
-    const MAX_BUFFER = 200;
-
-    if (config.listen !== false) {
-      listener = new CafeListener({
-        client,
-        actorId: configuredActorId,
-        tenantId: configuredTenantId,
-        roomId: configuredRoomId,
-        types: config.listenTypes || undefined,
-        pollTimeoutMs: config.pollTimeoutMs,
-        baseDelayMs: config.baseDelayMs,
-        maxBackoffMs: config.maxBackoffMs,
-        rebootstrapAfter: config.rebootstrapAfter,
-        autoAck: config.autoAck
-      });
-
-      listener.on("event", (evt) => {
-        if (eventBuffer.length >= MAX_BUFFER) {
-          eventBuffer.shift();
-        }
-        eventBuffer.push(evt);
-      });
-
-      listener.on("error", () => {});
-
-      listener.start().catch(() => {});
-    }
-
-    api.registerTool({
+    },
+    {
       name: "checkInbox",
       description: "Check for new mentions and messages directed at you since your last check.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
@@ -251,10 +225,10 @@ const plugin = {
         if (listener) {
           const events = eventBuffer.splice(0, eventBuffer.length);
           if (events.length === 0) {
-            return toolResult("No new messages.", { events: [] });
+            return { content: "No new messages.", data: { events: [] } };
           }
           const summary = events.map((e) => `${e.type} from ${e.actorId || "unknown"}`).join(", ");
-          return toolResult(`${events.length} new event(s): ${summary}`, { events });
+          return { content: `${events.length} new event(s): ${summary}`, data: { events } };
         }
 
         try {
@@ -267,42 +241,24 @@ const plugin = {
           });
           const events = response?.data?.events || [];
           if (events.length === 0) {
-            return toolResult("No new messages.", { events: [] });
+            return { content: "No new messages.", data: { events: [] } };
           }
           const summary = events.map((e) => `${e.type} from ${e.actorId || "unknown"}`).join(", ");
-          return toolResult(`${events.length} new event(s): ${summary}`, { events });
+          return { content: `${events.length} new event(s): ${summary}`, data: { events } };
         } catch (err) {
-          return toolResult(`Poll failed: ${err.message}`, { events: [] });
+          return { content: `Poll failed: ${err.message}`, data: { events: [] } };
         }
-      }
-    });
-
-    // ---- cafe command (OpenClaw only) ----
-
-    if (typeof api.registerCommand === "function") {
-      try {
-        api.registerCommand({
-          name: "cafe",
-          description: "Show AgentCafe info.",
-          execute: async () => {
-            const menu = await client.requestMenu();
-            const lines = menu.menu.map((item) => `- ${item.id}: ${item.name} — ${item.flavor}`);
-            return `AgentCafe\nRuntime: ${runtimeUrl}\nActor: ${configuredActorId}\nRoom: ${configuredRoomId}\n\nMenu:\n${lines.join("\n")}`;
-          }
-        });
-      } catch {
-        // Optional API surface
       }
     }
+  ];
 
-    return {
-      async dispose() {
-        if (listener) {
-          await listener.stop();
-        }
+  return {
+    tools,
+    client,
+    async dispose() {
+      if (listener) {
+        await listener.stop();
       }
-    };
-  }
-};
-
-export default plugin;
+    }
+  };
+}

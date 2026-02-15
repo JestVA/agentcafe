@@ -82,7 +82,7 @@ const EVENTS_POLL_HEARTBEAT_MIN_INTERVAL_MS = Math.max(
 const API_DB_AUTO_MIGRATE = String(process.env.API_DB_AUTO_MIGRATE ?? "true").toLowerCase() !== "false";
 const API_MAX_CHAT_MESSAGE_CHARS = Math.max(
   1,
-  Number(process.env.API_MAX_CHAT_MESSAGE_CHARS || process.env.AGENTCAFE_MAX_CHAT_MESSAGE_CHARS || 120)
+  Number(process.env.API_MAX_CHAT_MESSAGE_CHARS || process.env.AGENTCAFE_MAX_CHAT_MESSAGE_CHARS || 500)
 );
 const API_AUTH_TOKEN = String(process.env.API_AUTH_TOKEN || process.env.AGENTCAFE_RUNTIME_API_KEY || "").trim();
 const API_AUTH_QUERY_PARAM = String(process.env.API_AUTH_QUERY_PARAM || "apiKey").trim() || "apiKey";

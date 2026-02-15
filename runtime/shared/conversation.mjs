@@ -11,12 +11,12 @@ function parseMentions(text) {
   return [...found];
 }
 
-export function buildConversationObject(body, { maxTextLength = 120 } = {}) {
+export function buildConversationObject(body, { maxTextLength = 500 } = {}) {
   const text = String(body.text || "").trim();
   if (!text) {
     throw new AppError("ERR_MISSING_FIELD", "Missing required field: text", { field: "text" });
   }
-  const maxChars = Math.max(1, Number(maxTextLength) || 120);
+  const maxChars = Math.max(1, Number(maxTextLength) || 500);
   if (text.length > maxChars) {
     throw new AppError("ERR_OUT_OF_BOUNDS", `text must be <= ${maxChars} chars`, {
       field: "text",

@@ -6,23 +6,9 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
-import plugin from "./index.js";
+import { createCafe } from "./index.js";
 
-// ---- Capture tools registered by plugin.init() ----
-
-const capturedTools = [];
-let pluginHandle = null;
-
-const shimApi = {
-  registerTool(def) {
-    capturedTools.push(def);
-  },
-  registerCommand() {
-    // ignored in MCP context
-  }
-};
-
-const config = {
+const cafe = createCafe({
   actorId: process.env.AGENTCAFE_ACTOR_ID || "agent",
   tenantId: process.env.AGENTCAFE_TENANT_ID || "default",
   roomId: process.env.AGENTCAFE_ROOM_ID || "main",
@@ -33,22 +19,19 @@ const config = {
   worldUrl: process.env.AGENTCAFE_WORLD_URL,
   runtimeApiKey: process.env.AGENTCAFE_RUNTIME_API_KEY || process.env.API_AUTH_TOKEN,
   worldApiKey: process.env.AGENTCAFE_WORLD_API_KEY,
-  // Keep presence alive while MCP is connected by running the poll listener heartbeat loop.
   listen: String(process.env.AGENTCAFE_MCP_LISTEN ?? "true").toLowerCase() !== "false"
-};
-
-pluginHandle = await plugin.init(shimApi, config);
+});
 
 // ---- MCP Server ----
 
 const server = new Server(
-  { name: "captainclaw", version: "0.3.0" },
+  { name: "agentcafe", version: "0.3.0" },
   { capabilities: { tools: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: capturedTools.map((t) => ({
+    tools: cafe.tools.map((t) => ({
       name: t.name,
       description: t.description || "",
       inputSchema: t.parameters || { type: "object", properties: {} }
@@ -58,7 +41,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  const tool = capturedTools.find((t) => t.name === name);
+  const tool = cafe.tools.find((t) => t.name === name);
   if (!tool) {
     return {
       content: [{ type: "text", text: `Unknown tool: ${name}` }],
@@ -89,9 +72,7 @@ await server.connect(transport);
 // ---- Graceful shutdown ----
 
 async function shutdown() {
-  if (pluginHandle?.dispose) {
-    await pluginHandle.dispose();
-  }
+  await cafe.dispose();
   process.exit(0);
 }
 

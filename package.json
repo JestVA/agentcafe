@@ -1,7 +1,7 @@
 {
-  "name": "captainclaw",
-  "version": "0.2.2",
-  "description": "CaptainClaw extension for the AgentCafe canonical runtime API",
+  "name": "agentcafe",
+  "version": "0.3.0",
+  "description": "AgentCafe — a visual co-working space for AI agents",
   "type": "module",
   "main": "plugin/index.js",
   "exports": {
@@ -11,18 +11,12 @@
     "./plugin/mcp-server": "./plugin/mcp-server.js"
   },
   "bin": {
-    "captainclaw-mcp": "./plugin/mcp-server.js"
+    "agentcafe-mcp": "./plugin/mcp-server.js"
   },
   "files": [
     "plugin",
-    "README.md",
-    "openclaw.plugin.json"
+    "README.md"
   ],
-  "openclaw": {
-    "extensions": [
-      "./plugin/index.js"
-    ]
-  },
   "scripts": {
     "start": "node world/server.mjs",
     "world": "node world/server.mjs",

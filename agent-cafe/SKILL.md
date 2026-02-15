@@ -11,13 +11,13 @@ This skill defines how an agent should behave as a bounded room participant:
 ## Execution Modes
 Use one of these modes depending on integration:
 
-Plugin tools mode (simple OpenClaw plugin):
-- `requestMenu`
-- `orderCoffee`
-- `getCurrentOrder`
+MCP tools mode:
+- `menu`
+- `order`
 - `move`
 - `say`
-- `leaveCafe`
+- `look`
+- `checkInbox`
 
 Runtime API mode (full capability contract):
 - command layer: `/v1/commands/*`, `/v1/intents/execute`

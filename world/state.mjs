@@ -3,7 +3,7 @@ const GRID_HEIGHT = 12;
 const DEFAULT_ACTOR_ID = "agent";
 const MAX_ORDER_HISTORY = 50;
 const MAX_CHAT_HISTORY = 100;
-const MAX_CHAT_MESSAGE_CHARS = Math.max(1, Number(process.env.AGENTCAFE_MAX_CHAT_MESSAGE_CHARS || 120));
+const MAX_CHAT_MESSAGE_CHARS = Math.max(1, Number(process.env.AGENTCAFE_MAX_CHAT_MESSAGE_CHARS || 500));
 const ACTOR_INACTIVITY_MS = 5 * 60 * 1000;
 
 const MENU = [

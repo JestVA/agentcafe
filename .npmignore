@@ -1,4 +1,4 @@
-# Keep published package focused on the OpenClaw extension.
+# Keep published package focused on the MCP plugin.
 
 # VCS/editor noise
 .git
@@ -14,7 +14,7 @@ npm-debug.log*
 implementation
 agent-cafe
 
-# Runtime/world app code is not required by the CaptainClaw extension package
+# Runtime/world app code is not required by the MCP plugin package
 runtime
 world
 

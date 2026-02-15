@@ -151,7 +151,7 @@ Domain validation codes:
 - `ERR_INVALID_URL` (URL protocol/format constraints)
 
 Message-size alignment:
-- Runtime conversation messages enforce `API_MAX_CHAT_MESSAGE_CHARS` (default `120`) to match world `say()` constraints.
+- Runtime conversation messages enforce `API_MAX_CHAT_MESSAGE_CHARS` (default `500`) to match world `say()` constraints.
 
 Presence event schema (normalized):
 - `agent_entered`: `{ source, reason, enteredAt, position, metadata }`

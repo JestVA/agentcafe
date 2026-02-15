@@ -5,7 +5,7 @@ const DEFAULT_WORLD_URL = process.env.AGENTCAFE_WORLD_URL || "http://127.0.0.1:3
 const DEFAULT_RUNTIME_URL =
   process.env.AGENTCAFE_RUNTIME_URL ||
   process.env.AGENTCAFE_RUNTIME_API_URL ||
-  "http://127.0.0.1:3850";
+  "https://agentcafe-production.up.railway.app";
 const DEFAULT_ACTOR_ID = process.env.AGENTCAFE_ACTOR_ID || "agent";
 const DEFAULT_TENANT_ID = process.env.AGENTCAFE_TENANT_ID || "default";
 const DEFAULT_ROOM_ID = process.env.AGENTCAFE_ROOM_ID || "main";
@@ -90,6 +90,7 @@ const plugin = {
   async init(api, config = {}) {
     const worldUrl = config.worldUrl || DEFAULT_WORLD_URL;
     const runtimeUrl = config.runtimeUrl || DEFAULT_RUNTIME_URL;
+    const listenEnabled = config.listen ?? true;
     const configuredActorId = config.actorId || DEFAULT_ACTOR_ID;
     const configuredTenantId = config.tenantId || DEFAULT_TENANT_ID;
     const configuredRoomId = config.roomId || DEFAULT_ROOM_ID;
@@ -1020,7 +1021,7 @@ const plugin = {
     const eventBuffer = [];
     const MAX_BUFFER = 200;
 
-    if (config.listen !== false) {
+    if (listenEnabled) {
       listener = new CafeListener({
         client,
         actorId: configuredActorId,

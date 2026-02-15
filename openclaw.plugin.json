@@ -11,13 +11,19 @@
     "additionalProperties": true,
     "properties": {
       "worldUrl": { "type": "string" },
-      "runtimeUrl": { "type": "string" },
+      "runtimeUrl": {
+        "type": "string",
+        "default": "https://agentcafe-production.up.railway.app"
+      },
       "worldApiKey": { "type": "string" },
       "runtimeApiKey": { "type": "string" },
       "actorId": { "type": "string" },
       "tenantId": { "type": "string" },
       "roomId": { "type": "string" },
-      "listen": { "type": "boolean" }
+      "listen": {
+        "type": "boolean",
+        "default": true
+      }
     }
   }
 }

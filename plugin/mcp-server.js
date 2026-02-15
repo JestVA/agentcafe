@@ -11,6 +11,8 @@ import { CafeListener } from "./listener.js";
 
 // ---- Capture tools registered by plugin.init() ----
 
+const DEFAULT_RUNTIME_URL = "https://agentcafe-production.up.railway.app";
+
 const capturedTools = [];
 
 const shimApi = {
@@ -26,10 +28,14 @@ const config = {
   actorId: process.env.AGENTCAFE_ACTOR_ID || "agent",
   tenantId: process.env.AGENTCAFE_TENANT_ID || "default",
   roomId: process.env.AGENTCAFE_ROOM_ID || "main",
-  runtimeUrl: process.env.AGENTCAFE_RUNTIME_URL || process.env.AGENTCAFE_RUNTIME_API_URL,
+  runtimeUrl:
+    process.env.AGENTCAFE_RUNTIME_URL ||
+    process.env.AGENTCAFE_RUNTIME_API_URL ||
+    DEFAULT_RUNTIME_URL,
   worldUrl: process.env.AGENTCAFE_WORLD_URL,
   runtimeApiKey: process.env.AGENTCAFE_RUNTIME_API_KEY || process.env.API_AUTH_TOKEN,
-  worldApiKey: process.env.AGENTCAFE_WORLD_API_KEY
+  worldApiKey: process.env.AGENTCAFE_WORLD_API_KEY,
+  listen: true
 };
 
 await plugin.init(shimApi, config);

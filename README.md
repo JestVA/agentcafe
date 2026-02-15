@@ -44,13 +44,13 @@ Optional plugin config:
 {
   "plugins": {
     "captainclaw": {
-      "worldUrl": "http://127.0.0.1:3846",
-      "runtimeUrl": "http://127.0.0.1:3850",
+      "runtimeUrl": "https://agentcafe-production.up.railway.app",
       "worldApiKey": "<optional-world-api-key>",
       "runtimeApiKey": "<optional-runtime-api-key>",
       "tenantId": "default",
       "roomId": "main",
-      "actorId": "agent"
+      "actorId": "agent",
+      "listen": true
     }
   }
 }

@@ -1,43 +1,36 @@
+@import url("https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap");
+
 :root {
-  --color-primary-captain-red: #e63946;
-  --color-primary-coral-red: #dc2f3d;
-  --color-primary-deep-red: #a61e28;
+  --ac-espresso: #2d2424;
+  --ac-latte: #f5e6d3;
+  --ac-matcha: #7fd858;
+  --ac-berry: #ff6b9d;
+  --ac-blueberry: #5b8ff9;
+  --ac-mango: #ffb648;
+  --ac-lavender: #b095ff;
+  --ac-peach: #ffd4b2;
+  --ac-white: #ffffff;
+  --ac-black: #111111;
 
-  --color-neutral-charcoal: #1f2937;
-  --color-neutral-slate: #4b5563;
-  --color-neutral-light-gray: #e5e7eb;
+  --font-ui: "Inter", "Avenir Next", "Segoe UI", sans-serif;
+  --font-play: "Comic Neue", "Trebuchet MS", sans-serif;
+  --font-code: "Space Mono", "SFMono-Regular", Consolas, monospace;
 
-  --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-size-h2: 17px;
-  --font-size-body: 14px;
-  --font-size-meta: 12px;
+  --bg-page:
+    radial-gradient(circle at 14% 0%, rgba(255, 107, 157, 0.12) 0%, transparent 38%),
+    radial-gradient(circle at 92% 8%, rgba(91, 143, 249, 0.16) 0%, transparent 44%),
+    radial-gradient(circle at 50% 100%, rgba(127, 216, 88, 0.12) 0%, transparent 35%),
+    var(--ac-latte);
 
-  --bg-page: radial-gradient(circle at top right, #fff4f2 0%, #ffe7d0 38%, #fde0e2 100%);
-  --bg-canvas: #fffdfb;
-  --bg-overlay: rgba(255, 255, 255, 0.98);
+  --radius-card: 28px;
+  --radius-pill: 999px;
+  --border-thick: 4px solid var(--ac-black);
+  --border-medium: 3px solid var(--ac-black);
+  --shadow-hard: 8px 8px 0 0 var(--ac-black);
+  --shadow-card: 6px 6px 0 0 var(--ac-black);
+  --shadow-tight: 4px 4px 0 0 var(--ac-black);
 
-  --text-primary: var(--color-neutral-charcoal);
-  --text-secondary: var(--color-neutral-slate);
-  --text-on-accent: #ffffff;
-
-  --border-default: #f3c8b8;
-  --border-soft: var(--color-neutral-light-gray);
-  --border-strong: rgba(166, 30, 40, 0.26);
-
-  --action-primary-bg: linear-gradient(
-    135deg,
-    var(--color-primary-captain-red),
-    var(--color-primary-coral-red)
-  );
-  --action-primary-bg-hover: linear-gradient(
-    135deg,
-    var(--color-primary-coral-red),
-    var(--color-primary-deep-red)
-  );
-
-  --radius-card: 14px;
-  --shadow-soft: 0 10px 24px rgba(31, 41, 55, 0.08);
-  --topbar-h: 116px;
+  --topbar-h: 132px;
 }
 
 * {
@@ -52,112 +45,86 @@ body {
 
 body {
   margin: 0;
-  overflow: hidden;
-  font-family: var(--font-system);
-  font-size: var(--font-size-body);
-  color: var(--text-primary);
+  font-family: var(--font-ui);
+  color: var(--ac-espresso);
   background: var(--bg-page);
 }
 
-/* ---- Topbar ---- */
-
 .topbar {
-  height: var(--topbar-h);
+  min-height: var(--topbar-h);
   display: grid;
-  grid-template-columns: min-content 1fr min-content;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   align-items: center;
-  padding: 10px 20px;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: var(--border-thick);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(4px);
 }
 
-.topbar::after {
-  content: "";
-  width: 104px;
-  height: 104px;
+.brand-block {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .brand-logo {
-  width: 104px;
-  height: 104px;
+  width: 84px;
+  height: 84px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border: var(--border-medium);
+  border-radius: 24px;
+  background: var(--ac-espresso);
+  box-shadow: var(--shadow-tight);
 }
 
 .brand-logo svg {
-  width: 104px;
-  height: 104px;
+  width: 64px;
+  height: 64px;
   display: block;
 }
 
-.topbar-center {
-  justify-self: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-}
-
-.coffee-menu {
-  position: relative;
-}
-
-.coffee-menu-trigger {
-  border: 0;
-  border-radius: 999px;
-  padding: 10px 16px;
-  color: var(--text-on-accent);
+.brand-copy h1 {
+  margin: 0;
+  font-family: var(--font-play);
   font-weight: 700;
-  background: var(--action-primary-bg);
-  box-shadow: 0 8px 18px rgba(166, 30, 40, 0.2);
-  cursor: pointer;
+  font-size: clamp(34px, 4vw, 52px);
+  line-height: 0.9;
+  letter-spacing: -0.04em;
 }
 
-.coffee-menu-trigger:hover {
-  background: var(--action-primary-bg-hover);
+.brand-copy p {
+  margin: 6px 0 0;
+  color: rgba(45, 36, 36, 0.72);
+  font-weight: 600;
+  font-size: 15px;
 }
 
-.coffee-menu-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(360px, 84vw);
-  padding: 10px 12px;
-  border-radius: var(--radius-card);
-  border: 1px solid var(--border-default);
-  background: var(--bg-overlay);
-  box-shadow: var(--shadow-soft);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity 0.16s ease;
-  z-index: 40;
-}
-
-.coffee-menu:hover .coffee-menu-popover,
-.coffee-menu:focus-within .coffee-menu-popover {
-  opacity: 1;
-  visibility: visible;
+.header-menu-strip {
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .runtime-subtitle {
   margin: 0;
-  color: #6b3410;
-  font-size: var(--font-size-meta);
-  text-align: center;
+  max-width: 260px;
+  text-align: right;
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: rgba(45, 36, 36, 0.78);
 }
-
-/* ---- 3-column layout ---- */
 
 .app-layout {
   height: calc(100vh - var(--topbar-h));
   width: 100%;
-  padding: 6px 14px 12px;
+  padding: 14px;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 300px;
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
   gap: 14px;
 }
-
-/* ---- Side panels (left + right rails) ---- */
 
 .left-rail,
 .right-rail {
@@ -165,7 +132,7 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .left-rail .side-panel:first-child {
@@ -173,70 +140,73 @@ body {
   max-height: 50%;
 }
 
-.left-rail .side-panel:last-child {
-  flex: 1 1 auto;
-}
-
+.left-rail .side-panel:last-child,
 .right-rail .side-panel {
   flex: 1 1 auto;
 }
 
 .side-panel {
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-card);
-  background: var(--bg-overlay);
-  backdrop-filter: blur(3px);
-  padding: 10px;
   min-height: 0;
+  overflow: hidden;
   display: grid;
   grid-template-rows: min-content 1fr;
-  overflow: hidden;
+  gap: 8px;
+  padding: 14px;
+  border: var(--border-thick);
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: var(--shadow-card);
 }
-
-/* ---- Canvas ---- */
 
 .world-column {
   min-width: 0;
   min-height: 0;
   display: flex;
+  align-items: stretch;
   justify-content: center;
-  align-items: center;
 }
 
 .world-stage {
-  position: relative;
+  width: 100%;
+  min-height: 0;
+  border: var(--border-thick);
+  border-radius: 36px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(91, 143, 249, 0.15), transparent 36%),
+    radial-gradient(circle at 0% 100%, rgba(255, 107, 157, 0.16), transparent 40%),
+    rgba(255, 255, 255, 0.88);
+  box-shadow: var(--shadow-hard);
   display: flex;
-  justify-content: center;
   align-items: center;
+  justify-content: center;
+  padding: 10px;
 }
 
 canvas {
   max-width: 100%;
-  max-height: calc(100vh - var(--topbar-h) - 36px);
-  height: auto;
+  max-height: calc(100vh - var(--topbar-h) - 62px);
   width: auto;
+  height: auto;
   aspect-ratio: 5 / 3;
-  border-radius: 16px;
-  border: 2px solid var(--border-strong);
-  background: var(--bg-canvas);
-  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.18), var(--shadow-soft);
+  border: var(--border-medium);
+  border-radius: 28px;
+  background: #fffbf5;
+  box-shadow: 0 0 0 6px rgba(255, 212, 178, 0.65);
 }
 
-/* ---- Typography ---- */
-
 h2 {
-  margin: 0 0 6px;
-  font-size: var(--font-size-h2);
-  font-weight: 700;
+  margin: 0;
+  font-family: var(--font-play);
+  font-size: 28px;
+  letter-spacing: -0.02em;
 }
 
 .meta {
-  margin-top: 2px;
-  font-size: var(--font-size-meta);
-  color: var(--text-secondary);
+  margin-top: 4px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: rgba(45, 36, 36, 0.75);
 }
-
-/* ---- List items (no bullets/numbers) ---- */
 
 #chatList,
 #presenceListFooter,
@@ -246,38 +216,93 @@ h2 {
 }
 
 .feed-item {
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--border-soft);
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: var(--border-medium);
+  border-radius: 16px;
+  background: #fffaf2;
+  box-shadow: 3px 3px 0 0 var(--ac-black);
 }
 
 .feed-item:last-child {
-  border-bottom: none;
+  margin-bottom: 0;
 }
 
-/* ---- Menu list (keeps bullets inside popover) ---- */
+.feed-item strong {
+  font-family: var(--font-play);
+  font-size: 18px;
+  font-weight: 700;
+}
 
 #menuList {
   list-style: none;
-  padding: 0;
   margin: 0;
-  max-height: 220px;
-  overflow: auto;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  min-width: max-content;
 }
 
 #menuList li {
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--border-soft);
+  margin: 0;
+  width: 260px;
+  min-height: 104px;
+  padding: 10px 12px;
+  border: var(--border-medium);
+  border-radius: 18px;
+  background: rgba(255, 250, 242, 0.95);
+  box-shadow: 3px 3px 0 0 var(--ac-black);
 }
 
-#menuList li:last-child {
-  border-bottom: none;
+#menuList strong {
+  display: block;
+  font-family: var(--font-play);
+  font-size: 17px;
+  line-height: 1.05;
 }
 
-/* ---- Responsive ---- */
+#menuList .meta {
+  margin-top: 8px;
+  line-height: 1.35;
+  max-height: none;
+  overflow: visible;
+  white-space: normal;
+}
+
+@media (max-width: 1240px) {
+  .brand-copy h1 {
+    font-size: 40px;
+  }
+
+  .app-layout {
+    grid-template-columns: 240px minmax(0, 1fr) 280px;
+  }
+}
 
 @media (max-width: 980px) {
   body {
     overflow: auto;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .header-menu-strip {
+    width: 100%;
+  }
+
+  #menuList li {
+    width: min(78vw, 260px);
+  }
+
+  .runtime-subtitle {
+    max-width: none;
+    text-align: left;
   }
 
   .app-layout {
@@ -288,15 +313,22 @@ h2 {
 
   .left-rail,
   .right-rail {
-    flex-direction: row;
+    flex-direction: column;
   }
 
   .left-rail .side-panel:first-child {
     max-height: none;
-    flex: 1 1 50%;
   }
 
   .side-panel {
-    min-height: 200px;
+    min-height: 220px;
+  }
+
+  .world-stage {
+    min-height: 360px;
+  }
+
+  canvas {
+    max-height: 420px;
   }
 }

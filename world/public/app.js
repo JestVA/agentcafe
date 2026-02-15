@@ -18,6 +18,26 @@ const DEFAULT_ACTOR_Y = Math.floor(WORLD.height / 2);
 const DEFAULT_BUBBLE_TTL_MS = 7000;
 const WORLD_STALE_ACTOR_MS = 5 * 60 * 1000;
 const WORLD_RESYNC_IDLE_MS = 45 * 1000;
+const BRAND_COLORS = {
+  espresso: "#2D2424",
+  latte: "#F5E6D3",
+  matcha: "#7FD858",
+  berry: "#FF6B9D",
+  blueberry: "#5B8FF9",
+  mango: "#FFB648",
+  lavender: "#B095FF",
+  peach: "#FFD4B2",
+  white: "#FFFFFF",
+  black: "#111111"
+};
+const AGENT_PALETTE = [
+  BRAND_COLORS.matcha,
+  BRAND_COLORS.berry,
+  BRAND_COLORS.blueberry,
+  BRAND_COLORS.mango,
+  BRAND_COLORS.lavender,
+  BRAND_COLORS.peach
+];
 const MENU = [
   {
     id: "espresso_make_no_mistake",
@@ -56,7 +76,8 @@ const runtimeState = {
   runtimeConnected: false,
   streamCursor: 0,
   lastRuntimeEventAt: null,
-  worldActorsById: new Map()
+  worldActorsById: new Map(),
+  actorThemesById: new Map()
 };
 
 const PRESENCE_EVENT_TYPES = new Set([
@@ -82,6 +103,103 @@ const menuById = new Map();
 
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
+}
+
+function isHexColor(value) {
+  return typeof value === "string" && /^#([a-fA-F0-9]{6})$/.test(value.trim());
+}
+
+function hexToRgb(hex) {
+  if (!isHexColor(hex)) {
+    return null;
+  }
+  const clean = hex.trim().slice(1);
+  return {
+    r: Number.parseInt(clean.slice(0, 2), 16),
+    g: Number.parseInt(clean.slice(2, 4), 16),
+    b: Number.parseInt(clean.slice(4, 6), 16)
+  };
+}
+
+function toRgba(hex, alpha) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return `rgba(45, 36, 36, ${clamp(alpha, 0, 1)})`;
+  }
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${clamp(alpha, 0, 1)})`;
+}
+
+function blendWithLatte(hex, alpha = 0.24) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return BRAND_COLORS.latte;
+  }
+  const latte = hexToRgb(BRAND_COLORS.latte);
+  return `rgb(${Math.round(rgb.r * (1 - alpha) + latte.r * alpha)}, ${Math.round(rgb.g * (1 - alpha) + latte.g * alpha)}, ${Math.round(rgb.b * (1 - alpha) + latte.b * alpha)})`;
+}
+
+function isDarkColor(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return false;
+  }
+  const brightness = (rgb.r * 299 + rgb.g * 587 + rgb.b * 114) / 1000;
+  return brightness < 140;
+}
+
+function readableTextColor(hex) {
+  return isDarkColor(hex) ? BRAND_COLORS.white : BRAND_COLORS.espresso;
+}
+
+function normalizeTheme(theme) {
+  if (!theme || typeof theme !== "object") {
+    return null;
+  }
+  const bubbleColor = isHexColor(theme.bubbleColor) ? theme.bubbleColor.trim() : null;
+  const textColor = isHexColor(theme.textColor) ? theme.textColor.trim() : null;
+  const accentColor = isHexColor(theme.accentColor) ? theme.accentColor.trim() : null;
+  if (!bubbleColor && !textColor && !accentColor) {
+    return null;
+  }
+  return {
+    bubbleColor: bubbleColor || accentColor || BRAND_COLORS.matcha,
+    textColor: textColor || readableTextColor(bubbleColor || accentColor || BRAND_COLORS.matcha),
+    accentColor: accentColor || bubbleColor || BRAND_COLORS.matcha
+  };
+}
+
+function rememberActorTheme(actorId, theme) {
+  const id = String(actorId || "");
+  if (!id) {
+    return;
+  }
+  const normalized = normalizeTheme(theme);
+  if (!normalized) {
+    return;
+  }
+  runtimeState.actorThemesById.set(id, normalized);
+  const actor = runtimeState.worldActorsById.get(id);
+  if (actor) {
+    actor.theme = normalized;
+  }
+}
+
+function ingestSnapshotThemes(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") {
+    return;
+  }
+  const groups = [snapshot.actors, snapshot.messages, snapshot.chat];
+  for (const list of groups) {
+    if (!Array.isArray(list)) {
+      continue;
+    }
+    for (const item of list) {
+      if (!item?.actorId) {
+        continue;
+      }
+      rememberActorTheme(item.actorId, item.theme || item.profile?.theme || item.actor?.theme);
+    }
+  }
 }
 
 async function api(path, options = {}) {
@@ -125,11 +243,15 @@ function drawGrid() {
   canvas.height = height;
 
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#fffdf7";
+  ctx.fillStyle = "#FFFBF5";
   ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = toRgba(BRAND_COLORS.peach, 0.36);
+  ctx.fillRect(0, 0, width, 3 * CELL);
+  ctx.fillStyle = toRgba(BRAND_COLORS.blueberry, 0.08);
+  ctx.fillRect(0, height - 2 * CELL, width, 2 * CELL);
 
-  ctx.strokeStyle = "#ddd0b6";
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = toRgba(BRAND_COLORS.espresso, 0.14);
+  ctx.lineWidth = 1.2;
 
   for (let x = 0; x <= WORLD.width; x += 1) {
     ctx.beginPath();
@@ -144,59 +266,98 @@ function drawGrid() {
     ctx.lineTo(width, y * CELL);
     ctx.stroke();
   }
+
+  ctx.strokeStyle = toRgba(BRAND_COLORS.berry, 0.2);
+  ctx.lineWidth = 2.6;
+  for (let x = 0; x <= WORLD.width; x += 4) {
+    ctx.beginPath();
+    ctx.moveTo(x * CELL, 0);
+    ctx.lineTo(x * CELL, height);
+    ctx.stroke();
+  }
 }
 
 function colorFromId(id) {
-  const palette = ["#3f7a7a", "#9f5c3f", "#4f6aa8", "#6b7f43", "#8c4c78", "#b26b3b"];
   let hash = 0;
   for (const ch of String(id || "agent")) {
     hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   }
-  return palette[hash % palette.length];
+  return AGENT_PALETTE[hash % AGENT_PALETTE.length];
 }
 
-function drawStickmanWithCoffee(cx, cy, color) {
-  const headY = cy - 16;
+function resolveActorTheme(actor) {
+  const fallbackAccent = colorFromId(actor?.id);
+  const normalized = normalizeTheme(actor?.theme) || runtimeState.actorThemesById.get(String(actor?.id || ""));
+  if (normalized) {
+    return normalized;
+  }
+  return {
+    bubbleColor: fallbackAccent,
+    textColor: readableTextColor(fallbackAccent),
+    accentColor: fallbackAccent
+  };
+}
 
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = 2;
+function drawStickmanWithCoffee(cx, cy, accentColor) {
+  const headRadius = 12;
+  const headY = cy - 18;
+  const neckY = headY + headRadius;
+  const torsoBottom = neckY + 20;
+  const armY = neckY + 8;
+  const legY = torsoBottom + 14;
+
+  ctx.strokeStyle = accentColor;
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
 
   ctx.beginPath();
-  ctx.arc(cx, headY, 6, 0, Math.PI * 2);
+  ctx.arc(cx, headY, headRadius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.fillStyle = BRAND_COLORS.espresso;
+  ctx.beginPath();
+  ctx.arc(cx - 4, headY - 1, 2, 0, Math.PI * 2);
+  ctx.arc(cx + 4, headY - 1, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = BRAND_COLORS.espresso;
+  ctx.beginPath();
+  ctx.arc(cx, headY + 4, 4, 0.3, Math.PI - 0.3);
+  ctx.stroke();
+
+  ctx.strokeStyle = accentColor;
+  ctx.beginPath();
+  ctx.moveTo(cx, neckY);
+  ctx.lineTo(cx, torsoBottom);
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.moveTo(cx, headY + 6);
-  ctx.lineTo(cx, cy + 7);
+  ctx.moveTo(cx, armY);
+  ctx.lineTo(cx - 14, armY + 6);
+  ctx.moveTo(cx, armY);
+  ctx.lineTo(cx + 14, armY + 2);
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.moveTo(cx, cy - 2);
-  ctx.lineTo(cx - 9, cy + 3);
-  ctx.moveTo(cx, cy - 2);
-  ctx.lineTo(cx + 9, cy + 1);
+  ctx.moveTo(cx, torsoBottom);
+  ctx.lineTo(cx - 10, legY);
+  ctx.moveTo(cx, torsoBottom);
+  ctx.lineTo(cx + 10, legY);
   ctx.stroke();
 
+  ctx.strokeStyle = BRAND_COLORS.espresso;
+  ctx.strokeRect(cx + 14, armY - 1, 9, 9);
   ctx.beginPath();
-  ctx.moveTo(cx, cy + 7);
-  ctx.lineTo(cx - 8, cy + 17);
-  ctx.moveTo(cx, cy + 7);
-  ctx.lineTo(cx + 8, cy + 17);
+  ctx.arc(cx + 24, armY + 3, 3, -Math.PI / 2, Math.PI / 2);
   ctx.stroke();
 
-  ctx.strokeRect(cx + 9, cy - 4, 6, 7);
+  ctx.strokeStyle = BRAND_COLORS.matcha;
   ctx.beginPath();
-  ctx.moveTo(cx + 15, cy - 3);
-  ctx.lineTo(cx + 17, cy - 1);
-  ctx.lineTo(cx + 15, cy + 1);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(cx + 11, cy - 7);
-  ctx.quadraticCurveTo(cx + 10, cy - 11, cx + 12, cy - 13);
-  ctx.moveTo(cx + 14, cy - 7);
-  ctx.quadraticCurveTo(cx + 13, cy - 11, cx + 15, cy - 13);
+  ctx.moveTo(cx + 16, armY - 4);
+  ctx.quadraticCurveTo(cx + 14, armY - 8, cx + 16, armY - 11);
+  ctx.moveTo(cx + 20, armY - 4);
+  ctx.quadraticCurveTo(cx + 18, armY - 8, cx + 20, armY - 11);
   ctx.stroke();
 }
 
@@ -223,23 +384,25 @@ function wrapText(text, maxChars = 28) {
   return lines.slice(0, 3);
 }
 
-function drawSpeechBubble(actor, cx, cy) {
+function drawSpeechBubble(actor, cx, cy, theme) {
   if (!actor.bubble || !actor.bubble.text) {
     return null;
   }
 
-  const lines = wrapText(actor.bubble.text);
+  const lines = wrapText(actor.bubble.text, 24);
   const longest = Math.max(...lines.map((line) => line.length), 8);
-  const width = clamp(longest * 7.5 + 28, 140, 270);
-  const lineH = 17;
-  const padY = 10;
+  const width = clamp(longest * 8.5 + 40, 150, 300);
+  const lineH = 18;
+  const padY = 12;
   const height = padY * 2 + lines.length * lineH;
-  const tailH = 8;
-  const margin = 6;
+  const tailH = 12;
+  const margin = 8;
+  const radius = 24;
+  const borderWidth = 3;
+  const bubbleColor = theme?.bubbleColor || BRAND_COLORS.matcha;
+  const textColor = theme?.textColor || readableTextColor(bubbleColor);
 
   const x = clamp(cx - width / 2, margin, canvas.width - width - margin);
-
-  // Decide whether bubble goes above or below the actor
   const spaceAbove = cy - CELL / 2;
   const neededAbove = height + tailH + 8;
   const above = spaceAbove >= neededAbove;
@@ -252,84 +415,109 @@ function drawSpeechBubble(actor, cx, cy) {
   }
   y = clamp(y, margin, canvas.height - height - margin);
 
-  // Shadow
-  ctx.save();
-  ctx.shadowColor = "rgba(0, 0, 0, 0.10)";
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetY = 2;
-
-  // Bubble fill
-  ctx.fillStyle = "#1a1a1a";
+  ctx.fillStyle = BRAND_COLORS.black;
   ctx.beginPath();
-  ctx.roundRect(x, y, width, height, 8);
+  ctx.roundRect(x + 4, y + 4, width, height, radius);
   ctx.fill();
-  ctx.restore();
 
-  // Tail pointer
-  const tailX = clamp(cx, x + 14, x + width - 14);
-  ctx.fillStyle = "#1a1a1a";
+  ctx.fillStyle = BRAND_COLORS.black;
+  const tailX = clamp(cx, x + 20, x + width - 20);
+  const halfTail = 10;
   ctx.beginPath();
   if (above) {
-    ctx.moveTo(tailX - 5, y + height);
-    ctx.lineTo(tailX, y + height + tailH);
-    ctx.lineTo(tailX + 5, y + height);
+    ctx.moveTo(tailX - halfTail + 4, y + height + 4);
+    ctx.lineTo(tailX + 4, y + height + tailH + 4);
+    ctx.lineTo(tailX + halfTail + 4, y + height + 4);
   } else {
-    ctx.moveTo(tailX - 5, y);
-    ctx.lineTo(tailX, y - tailH);
-    ctx.lineTo(tailX + 5, y);
+    ctx.moveTo(tailX - halfTail + 4, y + 4);
+    ctx.lineTo(tailX + 4, y - tailH + 4);
+    ctx.lineTo(tailX + halfTail + 4, y + 4);
   }
   ctx.closePath();
   ctx.fill();
 
-  // Text
-  ctx.fillStyle = "#f0f0f0";
-  ctx.font = "500 13px 'Avenir Next', system-ui, sans-serif";
+  ctx.fillStyle = bubbleColor;
+  ctx.beginPath();
+  ctx.roundRect(x, y, width, height, radius);
+  ctx.fill();
+
+  ctx.strokeStyle = BRAND_COLORS.black;
+  ctx.lineWidth = borderWidth;
+  ctx.beginPath();
+  ctx.roundRect(x, y, width, height, radius);
+  ctx.stroke();
+
+  ctx.fillStyle = bubbleColor;
+  ctx.beginPath();
+  if (above) {
+    ctx.moveTo(tailX - halfTail, y + height);
+    ctx.lineTo(tailX, y + height + tailH);
+    ctx.lineTo(tailX + halfTail, y + height);
+  } else {
+    ctx.moveTo(tailX - halfTail, y);
+    ctx.lineTo(tailX, y - tailH);
+    ctx.lineTo(tailX + halfTail, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = BRAND_COLORS.black;
+  ctx.lineWidth = borderWidth;
+  ctx.stroke();
+
+  ctx.fillStyle = textColor;
+  ctx.font = "700 13px 'Comic Neue', 'Avenir Next', sans-serif";
   lines.forEach((line, index) => {
-    ctx.fillText(line, x + 12, y + padY + 13 + index * lineH);
+    ctx.fillText(line, x + 14, y + padY + 13 + index * lineH);
   });
 
   return { top: y, bottom: y + height, above };
 }
 
-function drawNameLabel(actorId, cx, cy, bubbleInfo = null) {
+function drawNameLabel(actorId, cx, cy, bubbleInfo = null, theme = null) {
   const label = String(actorId || "agent");
+  const accent = theme?.accentColor || colorFromId(actorId);
 
-  ctx.font = "600 11px 'Avenir Next', system-ui, sans-serif";
+  ctx.font = "700 12px 'Comic Neue', 'Avenir Next', sans-serif";
   const textWidth = ctx.measureText(label).width;
-  const boxWidth = textWidth + 14;
-  const boxHeight = 18;
-  const margin = 6;
+  const boxWidth = textWidth + 24;
+  const boxHeight = 20;
+  const margin = 8;
   const x = clamp(cx - boxWidth / 2, margin, canvas.width - boxWidth - margin);
   let preferredY;
   if (bubbleInfo == null) {
-    preferredY = cy - 44;
+    preferredY = cy - 58;
   } else if (bubbleInfo.above) {
-    preferredY = bubbleInfo.top - boxHeight - 4;
+    preferredY = bubbleInfo.top - boxHeight - 6;
   } else {
-    preferredY = cy - CELL / 2 - boxHeight - 4;
+    preferredY = cy - CELL / 2 - boxHeight - 6;
   }
   const y = clamp(preferredY, margin, canvas.height - boxHeight - margin);
 
-  ctx.save();
-  ctx.shadowColor = "rgba(0, 0, 0, 0.08)";
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetY = 1;
-  ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+  ctx.fillStyle = BRAND_COLORS.black;
   ctx.beginPath();
-  ctx.roundRect(x, y, boxWidth, boxHeight, 9);
+  ctx.roundRect(x + 3, y + 3, boxWidth, boxHeight, 10);
   ctx.fill();
-  ctx.restore();
 
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.10)";
-  ctx.lineWidth = 1;
+  ctx.fillStyle = BRAND_COLORS.white;
   ctx.beginPath();
-  ctx.roundRect(x, y, boxWidth, boxHeight, 9);
+  ctx.roundRect(x, y, boxWidth, boxHeight, 10);
+  ctx.fill();
+
+  ctx.strokeStyle = BRAND_COLORS.black;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(x, y, boxWidth, boxHeight, 10);
   ctx.stroke();
 
-  ctx.fillStyle = "#333";
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.arc(x + 10, y + boxHeight / 2, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = BRAND_COLORS.espresso;
   ctx.textBaseline = "middle";
-  ctx.fillText(label, x + 7, y + boxHeight / 2 + 0.5);
+  ctx.fillText(label, x + 16, y + boxHeight / 2 + 0.5);
   ctx.textBaseline = "alphabetic";
 }
 
@@ -340,11 +528,11 @@ function drawActor(actor) {
 
   const cx = actor.x * CELL + CELL / 2;
   const cy = actor.y * CELL + CELL / 2;
-  const color = colorFromId(actor.id);
+  const theme = resolveActorTheme(actor);
 
-  drawStickmanWithCoffee(cx, cy, color);
-  const bubbleInfo = drawSpeechBubble(actor, cx, cy);
-  drawNameLabel(actor.id, cx, cy, bubbleInfo);
+  drawStickmanWithCoffee(cx, cy, theme.accentColor);
+  const bubbleInfo = drawSpeechBubble(actor, cx, cy, theme);
+  drawNameLabel(actor.id, cx, cy, bubbleInfo, theme);
 }
 
 function render() {
@@ -384,11 +572,28 @@ function formatTime(value) {
   });
 }
 
+function accentForActor(actorId) {
+  const id = String(actorId || "agent");
+  const theme = runtimeState.actorThemesById.get(id);
+  if (theme?.accentColor) {
+    return theme.accentColor;
+  }
+  return colorFromId(id);
+}
+
+function decorateFeedItem(item, actorId) {
+  const accent = accentForActor(actorId);
+  item.style.borderColor = BRAND_COLORS.black;
+  item.style.background = blendWithLatte(accent, 0.78);
+  item.style.boxShadow = `3px 3px 0 0 ${BRAND_COLORS.black}`;
+}
+
 function renderOrders(orders) {
   ordersList.innerHTML = "";
   for (const order of orders) {
     const item = document.createElement("div");
     item.className = "feed-item";
+    decorateFeedItem(item, order.actorId);
     const title = document.createElement("strong");
     title.textContent = `${order.actorId} -> ${order.name}`;
     const meta = document.createElement("div");
@@ -404,6 +609,7 @@ function renderChats(chats) {
   for (const chat of chats) {
     const item = document.createElement("div");
     item.className = "feed-item";
+    decorateFeedItem(item, chat.actorId);
     const actor = document.createElement("strong");
     actor.textContent = `${chat.actorId}: `;
     const text = document.createTextNode(chat.text);
@@ -423,6 +629,7 @@ function renderPresence(rows) {
   for (const row of rows) {
     const item = document.createElement("div");
     item.className = "feed-item";
+    decorateFeedItem(item, row.actorId);
     const title = document.createElement("strong");
     const activeDot = row.isActive ? "active" : "inactive";
     title.textContent = `${row.actorId} (${row.status || activeDot})`;
@@ -447,6 +654,10 @@ function toRuntimeChat(event) {
   if (!text) {
     return null;
   }
+  rememberActorTheme(
+    event?.actorId,
+    event?.payload?.theme || event?.payload?.profile?.theme || event?.payload?.actor?.theme || event?.theme
+  );
   return {
     eventId: event.eventId,
     actorId: event.actorId || "agent",
@@ -460,6 +671,10 @@ function toRuntimeOrder(event) {
   if (!itemId) {
     return null;
   }
+  rememberActorTheme(
+    event?.actorId,
+    event?.payload?.theme || event?.payload?.profile?.theme || event?.payload?.actor?.theme || event?.theme
+  );
   const item = menuById.get(itemId);
   return {
     eventId: event.eventId,
@@ -547,10 +762,13 @@ function ensureWorldActor(map, actorId) {
       inCafe: true,
       bubble: null,
       currentOrder: null,
+      theme: runtimeState.actorThemesById.get(id) || null,
       status: "idle",
       lastActiveAt: Date.now()
     };
     map.set(id, actor);
+  } else if (!actor.theme) {
+    actor.theme = runtimeState.actorThemesById.get(id) || null;
   }
   return actor;
 }
@@ -601,6 +819,15 @@ function applyEventToWorld(map, event, options = {}) {
   }
 
   const actor = ensureWorldActor(map, actorId);
+  rememberActorTheme(
+    actorId,
+    event?.payload?.theme ||
+      event?.payload?.profile?.theme ||
+      event?.payload?.actor?.theme ||
+      event?.payload?.actorTheme ||
+      event?.theme
+  );
+  actor.theme = runtimeState.actorThemesById.get(String(actorId)) || actor.theme;
   actor.lastActiveAt = eventTimestampMs(event);
 
   if (type === "agent_entered") {
@@ -711,6 +938,8 @@ function projectWorldFromEvents(events = [], options = {}) {
       continue;
     }
     const actor = ensureWorldActor(map, presence.actorId);
+    rememberActorTheme(presence.actorId, presence.theme || presence.profile?.theme);
+    actor.theme = runtimeState.actorThemesById.get(String(presence.actorId)) || actor.theme;
     actor.status = presence.status || actor.status;
     actor.lastActiveAt =
       Date.parse(presence.lastHeartbeatAt || presence.updatedAt || presence.createdAt || "") || actor.lastActiveAt;
@@ -752,6 +981,7 @@ async function refreshRuntimeWorld(options = {}) {
   try {
     const replayPayload = await api(replayPath);
     events = replayPayload?.data?.events || [];
+    ingestSnapshotThemes(replayPayload?.data?.snapshot);
   } catch {
     const timelinePayload = await api(timelinePath);
     events = timelinePayload?.data?.events || [];
@@ -803,7 +1033,14 @@ async function refreshRuntimePresence() {
     `/v1/presence?tenantId=${encodeURIComponent(RUNTIME.tenantId)}` +
     `&roomId=${encodeURIComponent(RUNTIME.roomId)}&active=true&limit=100`;
   const payload = await api(path);
-  runtimeState.presence = (payload?.data?.presence || []).filter((row) => {
+  const rows = payload?.data?.presence || [];
+  for (const row of rows) {
+    if (!row?.actorId) {
+      continue;
+    }
+    rememberActorTheme(row.actorId, row.theme || row.profile?.theme);
+  }
+  runtimeState.presence = rows.filter((row) => {
     if (!row || !row.actorId) {
       return false;
     }
@@ -870,7 +1107,7 @@ function connectRuntimeStream() {
 
   source.addEventListener("ready", () => {
     runtimeState.runtimeConnected = true;
-    setRuntimeStatus(`Live in room ${RUNTIME.roomId}`);
+    setRuntimeStatus(`Cafe stream live in room ${RUNTIME.roomId}`);
   });
 
   source.addEventListener("heartbeat", () => {
@@ -899,7 +1136,7 @@ function connectRuntimeStream() {
 
   source.onerror = () => {
     runtimeState.runtimeConnected = false;
-    setRuntimeStatus("Reconnecting...");
+    setRuntimeStatus("Reconnecting agents to the cafe...");
   };
 
   return source;
@@ -914,6 +1151,7 @@ function reconnectRuntimeStream() {
 }
 
 async function boot() {
+  setRuntimeStatus("Brewing the live room stream...");
   renderMenu(MENU);
 
   try {

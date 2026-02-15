@@ -569,26 +569,7 @@ function normalizeGridPosition(value) {
   return { x: nx, y: ny };
 }
 
-function positionKey({ x, y }) {
-  return `${x}:${y}`;
-}
-
-function pickRandomAvailableGridPosition(occupied) {
-  const available = [];
-  for (let y = WORLD_GRID_BOUNDS.minY; y <= WORLD_GRID_BOUNDS.maxY; y += 1) {
-    for (let x = WORLD_GRID_BOUNDS.minX; x <= WORLD_GRID_BOUNDS.maxX; x += 1) {
-      const key = `${x}:${y}`;
-      if (!occupied.has(key)) {
-        available.push({ x, y });
-      }
-    }
-  }
-
-  if (available.length > 0) {
-    const index = Math.floor(Math.random() * available.length);
-    return available[index];
-  }
-
+function centerGridPosition() {
   return {
     x: Math.floor((WORLD_GRID_BOUNDS.minX + WORLD_GRID_BOUNDS.maxX) / 2),
     y: Math.floor((WORLD_GRID_BOUNDS.minY + WORLD_GRID_BOUNDS.maxY) / 2)
@@ -601,8 +582,7 @@ async function resolveEnterPosition({ tenantId, roomId, actorId, payload }) {
     return requested;
   }
 
-  // Build a current room view and place newly-entering actors into an empty cell.
-  // Limit is intentionally bounded to keep join latency predictable.
+  // Check if the actor already has a known position from event history.
   const events = await eventStore.list({
     tenantId,
     roomId,
@@ -621,22 +601,8 @@ async function resolveEnterPosition({ tenantId, roomId, actorId, payload }) {
     return existingPosition;
   }
 
-  const occupied = new Set();
-  for (const item of snapshot.actors) {
-    if (!item || item.actorId === actorId) {
-      continue;
-    }
-    const inactive = String(item.status || "").toLowerCase() === "inactive";
-    if (inactive) {
-      continue;
-    }
-    const pos = normalizeGridPosition(item);
-    if (pos) {
-      occupied.add(positionKey(pos));
-    }
-  }
-
-  return pickRandomAvailableGridPosition(occupied);
+  // New actors spawn at the center — stacking is allowed.
+  return centerGridPosition();
 }
 
 function parseProfileTheme(value, { field = "theme", partial = false } = {}) {

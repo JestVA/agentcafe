@@ -82,35 +82,7 @@ function touchActor(actor, now = nowMs()) {
   actor.lastActiveAt = now;
 }
 
-function findEmptySpawnCell() {
-  const occupied = new Set();
-  for (const actor of actors.values()) {
-    if (!actor?.inCafe) {
-      continue;
-    }
-    const x = Number(actor.x);
-    const y = Number(actor.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      continue;
-    }
-    occupied.add(`${Math.round(x)}:${Math.round(y)}`);
-  }
-
-  const available = [];
-  for (let y = 0; y < GRID_HEIGHT; y += 1) {
-    for (let x = 0; x < GRID_WIDTH; x += 1) {
-      const key = `${x}:${y}`;
-      if (!occupied.has(key)) {
-        available.push({ x, y });
-      }
-    }
-  }
-
-  if (available.length > 0) {
-    const index = Math.floor(Math.random() * available.length);
-    return available[index];
-  }
-
+function spawnCell() {
   return {
     x: Math.floor(GRID_WIDTH / 2),
     y: Math.floor(GRID_HEIGHT / 2)
@@ -122,7 +94,7 @@ function ensureActor(actorId = DEFAULT_ACTOR_ID) {
   const now = nowMs();
   let actor = actors.get(id);
   if (!actor) {
-    const spawn = findEmptySpawnCell();
+    const spawn = spawnCell();
     actor = {
       id,
       x: spawn.x,

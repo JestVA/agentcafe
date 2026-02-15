@@ -64,7 +64,8 @@ const MENU = [
 const RUNTIME = {
   tenantId: "default",
   roomId: "main",
-  chatLimit: 100
+  chatLimit: 100,
+  initialLoadDone: false
 };
 
 const runtimeState = {
@@ -237,21 +238,24 @@ async function api(path, options = {}) {
 }
 
 function drawGrid() {
+  const dpr = window.devicePixelRatio || 1;
   const width = WORLD.width * CELL;
   const height = WORLD.height * CELL;
-  canvas.width = width;
-  canvas.height = height;
 
+  if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+  }
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#FFFBF5";
+  ctx.fillStyle = "#fdfcfa";
   ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = toRgba(BRAND_COLORS.peach, 0.36);
-  ctx.fillRect(0, 0, width, 3 * CELL);
-  ctx.fillStyle = toRgba(BRAND_COLORS.blueberry, 0.08);
-  ctx.fillRect(0, height - 2 * CELL, width, 2 * CELL);
 
-  ctx.strokeStyle = toRgba(BRAND_COLORS.espresso, 0.14);
-  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.05)";
+  ctx.lineWidth = 1;
 
   for (let x = 0; x <= WORLD.width; x += 1) {
     ctx.beginPath();
@@ -402,7 +406,7 @@ function drawSpeechBubble(actor, cx, cy, theme) {
   const bubbleColor = theme?.bubbleColor || BRAND_COLORS.matcha;
   const textColor = theme?.textColor || readableTextColor(bubbleColor);
 
-  const x = clamp(cx - width / 2, margin, canvas.width - width - margin);
+  const x = clamp(cx - width / 2, margin, WORLD.width * CELL - width - margin);
   const spaceAbove = cy - CELL / 2;
   const neededAbove = height + tailH + 8;
   const above = spaceAbove >= neededAbove;
@@ -413,7 +417,7 @@ function drawSpeechBubble(actor, cx, cy, theme) {
   } else {
     y = cy + CELL / 2 + tailH + 4;
   }
-  y = clamp(y, margin, canvas.height - height - margin);
+  y = clamp(y, margin, WORLD.height * CELL - height - margin);
 
   ctx.fillStyle = BRAND_COLORS.black;
   ctx.beginPath();
@@ -483,7 +487,7 @@ function drawNameLabel(actorId, cx, cy, bubbleInfo = null, theme = null) {
   const boxWidth = textWidth + 24;
   const boxHeight = 20;
   const margin = 8;
-  const x = clamp(cx - boxWidth / 2, margin, canvas.width - boxWidth - margin);
+  const x = clamp(cx - boxWidth / 2, margin, WORLD.width * CELL - boxWidth - margin);
   let preferredY;
   if (bubbleInfo == null) {
     preferredY = cy - 58;
@@ -492,7 +496,7 @@ function drawNameLabel(actorId, cx, cy, bubbleInfo = null, theme = null) {
   } else {
     preferredY = cy - CELL / 2 - boxHeight - 6;
   }
-  const y = clamp(preferredY, margin, canvas.height - boxHeight - margin);
+  const y = clamp(preferredY, margin, WORLD.height * CELL - boxHeight - margin);
 
   ctx.fillStyle = BRAND_COLORS.black;
   ctx.beginPath();
@@ -583,9 +587,7 @@ function accentForActor(actorId) {
 
 function decorateFeedItem(item, actorId) {
   const accent = accentForActor(actorId);
-  item.style.borderColor = BRAND_COLORS.black;
-  item.style.background = blendWithLatte(accent, 0.78);
-  item.style.boxShadow = `3px 3px 0 0 ${BRAND_COLORS.black}`;
+  item.style.borderLeft = `3px solid ${accent}`;
 }
 
 function renderOrders(orders) {
@@ -593,9 +595,13 @@ function renderOrders(orders) {
   for (const order of orders) {
     const item = document.createElement("div");
     item.className = "feed-item";
+    if (order._isNew) {
+      item.classList.add("anim-wiggle");
+      delete order._isNew;
+    }
     decorateFeedItem(item, order.actorId);
     const title = document.createElement("strong");
-    title.textContent = `${order.actorId} -> ${order.name}`;
+    title.textContent = `${order.actorId} \u2014 ${order.name}`;
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = `${order.size} at ${formatTime(order.orderedAt)}`;
@@ -716,45 +722,15 @@ function updateStreamCursorFromEvents(events = []) {
   runtimeState.streamCursor = next;
 }
 
-function pickRandomEmptyWorldPosition(map) {
-  const occupied = new Set();
-  for (const actor of map.values()) {
-    if (!actor || actor.inCafe === false || String(actor.status || "").toLowerCase() === "inactive") {
-      continue;
-    }
-    const x = Number(actor.x);
-    const y = Number(actor.y);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      continue;
-    }
-    occupied.add(`${Math.round(x)}:${Math.round(y)}`);
-  }
-
-  const available = [];
-  for (let y = 0; y < WORLD.height; y += 1) {
-    for (let x = 0; x < WORLD.width; x += 1) {
-      const key = `${x}:${y}`;
-      if (!occupied.has(key)) {
-        available.push({ x, y });
-      }
-    }
-  }
-
-  if (available.length > 0) {
-    const index = Math.floor(Math.random() * available.length);
-    return available[index];
-  }
-  return {
-    x: DEFAULT_ACTOR_X,
-    y: DEFAULT_ACTOR_Y
-  };
+function spawnPosition() {
+  return { x: DEFAULT_ACTOR_X, y: DEFAULT_ACTOR_Y };
 }
 
 function ensureWorldActor(map, actorId) {
   const id = String(actorId || "agent");
   let actor = map.get(id);
   if (!actor) {
-    const spawn = pickRandomEmptyWorldPosition(map);
+    const spawn = spawnPosition();
     actor = {
       id,
       x: spawn.x,
@@ -831,13 +807,19 @@ function applyEventToWorld(map, event, options = {}) {
   actor.lastActiveAt = eventTimestampMs(event);
 
   if (type === "agent_entered") {
+    const isNew = !actor.inCafe;
     actor.inCafe = true;
-    actor.status = "idle";
-    const px = Number(event?.payload?.position?.x);
-    const py = Number(event?.payload?.position?.y);
-    if (Number.isFinite(px) && Number.isFinite(py)) {
-      actor.x = clamp(px, 0, WORLD.width - 1);
-      actor.y = clamp(py, 0, WORLD.height - 1);
+    if (isNew) {
+      actor.status = "idle";
+      const pos = event?.payload?.position;
+      if (pos != null && typeof pos === "object") {
+        const px = Number(pos.x);
+        const py = Number(pos.y);
+        if (Number.isFinite(px) && Number.isFinite(py)) {
+          actor.x = clamp(px, 0, WORLD.width - 1);
+          actor.y = clamp(py, 0, WORLD.height - 1);
+        }
+      }
     }
     return;
   }

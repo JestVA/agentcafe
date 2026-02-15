@@ -46,12 +46,6 @@ export function createCafe(config = {}) {
     roomId: maybeString(input.roomId, configuredRoomId)
   });
 
-  const enter = async (input = {}) => {
-    const data = ctx(input);
-    await client.enterCafe(data);
-    return data;
-  };
-
   // ---- listener ----
 
   let listener = null;
@@ -114,7 +108,7 @@ export function createCafe(config = {}) {
       },
       execute: async (input = {}) => {
         const body = definedEntries({
-          ...await enter(input),
+          ...ctx(input),
           itemId: maybeString(input.itemId),
           size: maybeString(input.size, "regular")
         });
@@ -136,7 +130,7 @@ export function createCafe(config = {}) {
       },
       execute: async (input = {}) => {
         const body = definedEntries({
-          ...await enter(input),
+          ...ctx(input),
           direction: maybeString(input.direction),
           steps: maybeFiniteNumber(input.steps, 1)
         });
@@ -169,7 +163,7 @@ export function createCafe(config = {}) {
           }
         }
         const body = definedEntries({
-          ...await enter(input),
+          ...ctx(input),
           text: maybeString(input.text),
           mentions
         });

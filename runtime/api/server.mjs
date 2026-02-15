@@ -573,15 +573,22 @@ function positionKey({ x, y }) {
   return `${x}:${y}`;
 }
 
-function findFirstAvailableGridPosition(occupied) {
+function pickRandomAvailableGridPosition(occupied) {
+  const available = [];
   for (let y = WORLD_GRID_BOUNDS.minY; y <= WORLD_GRID_BOUNDS.maxY; y += 1) {
     for (let x = WORLD_GRID_BOUNDS.minX; x <= WORLD_GRID_BOUNDS.maxX; x += 1) {
       const key = `${x}:${y}`;
       if (!occupied.has(key)) {
-        return { x, y };
+        available.push({ x, y });
       }
     }
   }
+
+  if (available.length > 0) {
+    const index = Math.floor(Math.random() * available.length);
+    return available[index];
+  }
+
   return {
     x: Math.floor((WORLD_GRID_BOUNDS.minX + WORLD_GRID_BOUNDS.maxX) / 2),
     y: Math.floor((WORLD_GRID_BOUNDS.minY + WORLD_GRID_BOUNDS.maxY) / 2)
@@ -629,7 +636,7 @@ async function resolveEnterPosition({ tenantId, roomId, actorId, payload }) {
     }
   }
 
-  return findFirstAvailableGridPosition(occupied);
+  return pickRandomAvailableGridPosition(occupied);
 }
 
 function parseProfileTheme(value, { field = "theme", partial = false } = {}) {

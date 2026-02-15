@@ -501,14 +501,49 @@ function updateStreamCursorFromEvents(events = []) {
   runtimeState.streamCursor = next;
 }
 
+function pickRandomEmptyWorldPosition(map) {
+  const occupied = new Set();
+  for (const actor of map.values()) {
+    if (!actor || actor.inCafe === false || String(actor.status || "").toLowerCase() === "inactive") {
+      continue;
+    }
+    const x = Number(actor.x);
+    const y = Number(actor.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    occupied.add(`${Math.round(x)}:${Math.round(y)}`);
+  }
+
+  const available = [];
+  for (let y = 0; y < WORLD.height; y += 1) {
+    for (let x = 0; x < WORLD.width; x += 1) {
+      const key = `${x}:${y}`;
+      if (!occupied.has(key)) {
+        available.push({ x, y });
+      }
+    }
+  }
+
+  if (available.length > 0) {
+    const index = Math.floor(Math.random() * available.length);
+    return available[index];
+  }
+  return {
+    x: DEFAULT_ACTOR_X,
+    y: DEFAULT_ACTOR_Y
+  };
+}
+
 function ensureWorldActor(map, actorId) {
   const id = String(actorId || "agent");
   let actor = map.get(id);
   if (!actor) {
+    const spawn = pickRandomEmptyWorldPosition(map);
     actor = {
       id,
-      x: DEFAULT_ACTOR_X,
-      y: DEFAULT_ACTOR_Y,
+      x: spawn.x,
+      y: spawn.y,
       inCafe: true,
       bubble: null,
       currentOrder: null,

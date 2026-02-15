@@ -96,13 +96,19 @@ function findEmptySpawnCell() {
     occupied.add(`${Math.round(x)}:${Math.round(y)}`);
   }
 
+  const available = [];
   for (let y = 0; y < GRID_HEIGHT; y += 1) {
     for (let x = 0; x < GRID_WIDTH; x += 1) {
       const key = `${x}:${y}`;
       if (!occupied.has(key)) {
-        return { x, y };
+        available.push({ x, y });
       }
     }
+  }
+
+  if (available.length > 0) {
+    const index = Math.floor(Math.random() * available.length);
+    return available[index];
   }
 
   return {

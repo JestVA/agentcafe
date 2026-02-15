@@ -338,29 +338,31 @@ function formatTime(value) {
 function renderOrders(orders) {
   ordersList.innerHTML = "";
   for (const order of orders) {
-    const li = document.createElement("li");
+    const item = document.createElement("div");
+    item.className = "feed-item";
     const title = document.createElement("strong");
     title.textContent = `${order.actorId} -> ${order.name}`;
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = `${order.size} at ${formatTime(order.orderedAt)}`;
-    li.append(title, meta);
-    ordersList.appendChild(li);
+    item.append(title, meta);
+    ordersList.appendChild(item);
   }
 }
 
 function renderChats(chats) {
   chatList.innerHTML = "";
   for (const chat of chats) {
-    const li = document.createElement("li");
+    const item = document.createElement("div");
+    item.className = "feed-item";
     const actor = document.createElement("strong");
     actor.textContent = `${chat.actorId}: `;
     const text = document.createTextNode(chat.text);
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = formatTime(chat.saidAt);
-    li.append(actor, text, meta);
-    chatList.appendChild(li);
+    item.append(actor, text, meta);
+    chatList.appendChild(item);
   }
 }
 
@@ -369,16 +371,17 @@ function renderPresence(rows) {
     return;
   }
   presenceListFooter.innerHTML = "";
-  for (const item of rows) {
-    const li = document.createElement("li");
+  for (const row of rows) {
+    const item = document.createElement("div");
+    item.className = "feed-item";
     const title = document.createElement("strong");
-    const activeDot = item.isActive ? "active" : "inactive";
-    title.textContent = `${item.actorId} (${item.status || activeDot})`;
+    const activeDot = row.isActive ? "active" : "inactive";
+    title.textContent = `${row.actorId} (${row.status || activeDot})`;
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `last heartbeat ${formatTime(item.lastHeartbeatAt || item.updatedAt)}`;
-    li.append(title, meta);
-    presenceListFooter.appendChild(li);
+    meta.textContent = `last heartbeat ${formatTime(row.lastHeartbeatAt || row.updatedAt)}`;
+    item.append(title, meta);
+    presenceListFooter.appendChild(item);
   }
 }
 
@@ -847,8 +850,6 @@ async function boot() {
 }
 
 boot().catch((error) => {
-  const li = document.createElement("li");
-  li.textContent = error instanceof Error ? error.message : String(error);
-  ordersList.appendChild(li);
-  setRuntimeStatus(li.textContent);
+  const msg = error instanceof Error ? error.message : String(error);
+  setRuntimeStatus(msg);
 });

@@ -59,6 +59,8 @@ body {
   background: var(--bg-page);
 }
 
+/* ---- Topbar ---- */
+
 .topbar {
   height: var(--topbar-h);
   display: grid;
@@ -87,9 +89,16 @@ body {
   display: block;
 }
 
+.topbar-center {
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
 .coffee-menu {
   position: relative;
-  justify-self: center;
 }
 
 .coffee-menu-trigger {
@@ -130,36 +139,82 @@ body {
   visibility: visible;
 }
 
+.runtime-subtitle {
+  margin: 0;
+  color: #6b3410;
+  font-size: var(--font-size-meta);
+  text-align: center;
+}
+
+/* ---- 3-column layout ---- */
+
 .app-layout {
   height: calc(100vh - var(--topbar-h));
   width: 100%;
   padding: 6px 14px 12px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: 260px minmax(0, 1fr) 300px;
   gap: 14px;
 }
 
+/* ---- Side panels (left + right rails) ---- */
+
+.left-rail,
+.right-rail {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.left-rail .side-panel:first-child {
+  flex: 0 0 auto;
+  max-height: 50%;
+}
+
+.left-rail .side-panel:last-child {
+  flex: 1 1 auto;
+}
+
+.right-rail .side-panel {
+  flex: 1 1 auto;
+}
+
+.side-panel {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+  background: var(--bg-overlay);
+  backdrop-filter: blur(3px);
+  padding: 10px;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: min-content 1fr;
+  overflow: hidden;
+}
+
+/* ---- Canvas ---- */
+
 .world-column {
   min-width: 0;
-  display: grid;
-  grid-template-rows: auto minmax(180px, 1fr) min-content;
-  gap: 6px;
   min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .world-stage {
   position: relative;
-  min-height: 0;
   display: flex;
   justify-content: center;
-  align-items: flex-start;
+  align-items: center;
 }
 
 canvas {
-  width: 100%;
   max-width: 100%;
-  max-height: min(100%, calc(100vh - var(--topbar-h) - 220px));
+  max-height: calc(100vh - var(--topbar-h) - 36px);
   height: auto;
+  width: auto;
   aspect-ratio: 5 / 3;
   border-radius: 16px;
   border: 2px solid var(--border-strong);
@@ -167,63 +222,12 @@ canvas {
   box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.18), var(--shadow-soft);
 }
 
-.world-lower-panels {
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.world-lower-panel {
-  min-height: 0;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-card);
-  background: var(--bg-overlay);
-  padding: 9px;
-  display: grid;
-  grid-template-rows: min-content 1fr;
-}
-
-.runtime-subtitle {
-  margin: 0;
-  padding: 2px 4px 0;
-  color: #6b3410;
-  font-size: var(--font-size-meta);
-}
-
-.right-rail {
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
-.chat-panel {
-  height: 100%;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-card);
-  background: var(--bg-overlay);
-  backdrop-filter: blur(3px);
-  padding: 10px;
-  display: grid;
-  grid-template-rows: min-content 1fr;
-}
+/* ---- Typography ---- */
 
 h2 {
-  margin: 0;
+  margin: 0 0 6px;
   font-size: var(--font-size-h2);
   font-weight: 700;
-}
-
-ul,
-ol {
-  margin: 0;
-  padding-left: 18px;
-}
-
-li {
-  margin-bottom: 8px;
-  border-bottom: 1px dashed var(--border-soft);
-  padding-bottom: 7px;
 }
 
 .meta {
@@ -232,18 +236,44 @@ li {
   color: var(--text-secondary);
 }
 
+/* ---- List items (no bullets/numbers) ---- */
+
 #chatList,
 #presenceListFooter,
-#ordersList,
-#menuList {
-  height: 100%;
+#ordersList {
   overflow: auto;
   padding-right: 4px;
 }
 
-#menuList {
-  max-height: 220px;
+.feed-item {
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border-soft);
 }
+
+.feed-item:last-child {
+  border-bottom: none;
+}
+
+/* ---- Menu list (keeps bullets inside popover) ---- */
+
+#menuList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+#menuList li {
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border-soft);
+}
+
+#menuList li:last-child {
+  border-bottom: none;
+}
+
+/* ---- Responsive ---- */
 
 @media (max-width: 980px) {
   body {
@@ -256,15 +286,17 @@ li {
     grid-template-columns: 1fr;
   }
 
-  .world-column {
-    grid-template-rows: auto minmax(220px, auto) min-content;
-  }
-
-  .world-lower-panels {
-    grid-template-columns: 1fr;
-  }
-
+  .left-rail,
   .right-rail {
-    min-height: 400px;
+    flex-direction: row;
+  }
+
+  .left-rail .side-panel:first-child {
+    max-height: none;
+    flex: 1 1 50%;
+  }
+
+  .side-panel {
+    min-height: 200px;
   }
 }

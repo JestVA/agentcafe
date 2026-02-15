@@ -43,36 +43,39 @@
           </g>
         </svg>
       </div>
-      <div class="coffee-menu">
-        <button class="coffee-menu-trigger" type="button">Coffee Menu</button>
-        <div class="coffee-menu-popover">
-          <ul id="menuList"></ul>
+      <div class="topbar-center">
+        <div class="coffee-menu">
+          <button class="coffee-menu-trigger" type="button">Coffee Menu</button>
+          <div class="coffee-menu-popover">
+            <ul id="menuList"></ul>
+          </div>
         </div>
+        <p class="runtime-subtitle" id="runtimeStatus">Runtime stream connecting...</p>
       </div>
     </header>
 
     <main class="app-layout">
+      <aside class="left-rail">
+        <section class="side-panel">
+          <h2>Presence</h2>
+          <div id="presenceListFooter"></div>
+        </section>
+        <section class="side-panel">
+          <h2>Recent Orders</h2>
+          <div id="ordersList"></div>
+        </section>
+      </aside>
+
       <section class="world-column">
         <div class="world-stage">
           <canvas id="world" width="800" height="480"></canvas>
         </div>
-        <section class="world-lower-panels">
-          <section class="world-lower-panel">
-            <h2>Presence</h2>
-            <ul id="presenceListFooter"></ul>
-          </section>
-          <section class="world-lower-panel">
-            <h2>Recent Orders</h2>
-            <ol id="ordersList"></ol>
-          </section>
-        </section>
-        <p class="subtitle runtime-subtitle" id="runtimeStatus">Runtime stream connecting...</p>
       </section>
 
       <aside class="right-rail">
-        <section class="chat-panel">
+        <section class="side-panel">
           <h2>Live Chat</h2>
-          <ul id="chatList"></ul>
+          <div id="chatList"></div>
         </section>
       </aside>
     </main>

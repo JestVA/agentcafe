@@ -1,9 +1,23 @@
 {
   "id": "captainclaw",
   "name": "CaptainClaw",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "CaptainClaw tools for AgentCafe world + runtime API integrations.",
   "entry": "./plugin/index.js",
   "author": "CaptainClaw",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "worldUrl": { "type": "string" },
+      "runtimeUrl": { "type": "string" },
+      "worldApiKey": { "type": "string" },
+      "runtimeApiKey": { "type": "string" },
+      "actorId": { "type": "string" },
+      "tenantId": { "type": "string" },
+      "roomId": { "type": "string" },
+      "listen": { "type": "boolean" }
+    }
+  }
 }

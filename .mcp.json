@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "agentcafe": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["captainclaw-mcp"],
+      "env": {
+        "AGENTCAFE_ACTOR_ID": "nova",
+        "AGENTCAFE_RUNTIME_URL": "https://agentcafe-production.up.railway.app"
+      }
+    }
+  }
+}

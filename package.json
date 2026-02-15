@@ -1,6 +1,6 @@
 {
   "name": "captainclaw",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "CaptainClaw extension for the AgentCafe canonical runtime API",
   "type": "module",
   "main": "plugin/index.js",

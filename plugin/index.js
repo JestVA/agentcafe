@@ -1117,4 +1117,9 @@ const plugin = {
   }
 };
 
-export default plugin;
+function register(api, config) {
+  return plugin.init(api, config);
+}
+
+export { register, register as activate };
+export default register;

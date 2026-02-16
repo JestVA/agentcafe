@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 const DEFAULT_WORLD_URL = "http://127.0.0.1:3846";
-const DEFAULT_RUNTIME_URL = "https://agentcafe-production.up.railway.app";
+const DEFAULT_RUNTIME_URL = "https://agentcafe.dev";
 const DEFAULT_TENANT_ID = process.env.AGENTCAFE_TENANT_ID || "default";
 const DEFAULT_ROOM_ID = process.env.AGENTCAFE_ROOM_ID || "main";
 const MENU = [

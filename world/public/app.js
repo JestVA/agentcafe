@@ -42,22 +42,26 @@ const MENU = [
   {
     id: "espresso_make_no_mistake",
     name: "Espresso - Make No Mistake",
-    flavor: "Be precise, decisive, and verify assumptions before action."
+    flavor: "Be precise, decisive, and verify assumptions before action.",
+    icon: "\u2615"
   },
   {
     id: "americano_sprint",
     name: "Americano - Sprint",
-    flavor: "Move fast, prioritize progress, keep explanations minimal."
+    flavor: "Move fast, prioritize progress, keep explanations minimal.",
+    icon: "\u{1F3C3}"
   },
   {
     id: "cappuccino_flow",
     name: "Cappuccino - Flow",
-    flavor: "Creative but structured: propose options, then choose one and execute."
+    flavor: "Creative but structured: propose options, then choose one and execute.",
+    icon: "\u{1F3A8}"
   },
   {
     id: "decaf_reflect",
     name: "Decaf - Reflect",
-    flavor: "Pause and review: debug, audit, and reduce risk before changes."
+    flavor: "Pause and review: debug, audit, and reduce risk before changes.",
+    icon: "\u{1F9D8}"
   }
 ];
 
@@ -254,7 +258,7 @@ function drawGrid() {
   ctx.fillStyle = "#fdfcfa";
   ctx.fillRect(0, 0, width, height);
 
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.05)";
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.03)";
   ctx.lineWidth = 1;
 
   for (let x = 0; x <= WORLD.width; x += 1) {
@@ -268,15 +272,6 @@ function drawGrid() {
     ctx.beginPath();
     ctx.moveTo(0, y * CELL);
     ctx.lineTo(width, y * CELL);
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = toRgba(BRAND_COLORS.berry, 0.2);
-  ctx.lineWidth = 2.6;
-  for (let x = 0; x <= WORLD.width; x += 4) {
-    ctx.beginPath();
-    ctx.moveTo(x * CELL, 0);
-    ctx.lineTo(x * CELL, height);
     ctx.stroke();
   }
 }
@@ -554,6 +549,12 @@ function renderMenu(menu) {
       menuById.set(item.id, item);
     }
     const li = document.createElement("li");
+    if (item.icon) {
+      const icon = document.createElement("span");
+      icon.className = "menu-icon";
+      icon.textContent = item.icon;
+      li.appendChild(icon);
+    }
     const title = document.createElement("strong");
     title.textContent = item.name;
     const flavor = document.createElement("div");
@@ -585,13 +586,42 @@ function accentForActor(actorId) {
   return colorFromId(id);
 }
 
-function decorateFeedItem(item, actorId) {
+function agentInitial(actorId) {
+  const id = String(actorId || "?");
+  return id.charAt(0).toUpperCase();
+}
+
+function createAgentDot(actorId, size) {
+  const dot = document.createElement("div");
+  dot.className = "agent-dot";
   const accent = accentForActor(actorId);
-  item.style.borderLeft = `3px solid ${accent}`;
+  dot.style.background = accent;
+  dot.textContent = agentInitial(actorId);
+  if (size) {
+    dot.style.width = size + "px";
+    dot.style.height = size + "px";
+  }
+  return dot;
+}
+
+function createEmptyState(icon, message) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "empty-state";
+  const iconEl = document.createElement("div");
+  iconEl.className = "empty-icon";
+  iconEl.textContent = icon;
+  const text = document.createElement("div");
+  text.textContent = message;
+  wrapper.append(iconEl, text);
+  return wrapper;
 }
 
 function renderOrders(orders) {
   ordersList.innerHTML = "";
+  if (orders.length === 0) {
+    ordersList.appendChild(createEmptyState("\u2615", "No orders yet\u2026 the barista is waiting."));
+    return;
+  }
   for (const order of orders) {
     const item = document.createElement("div");
     item.className = "feed-item";
@@ -599,35 +629,51 @@ function renderOrders(orders) {
       item.classList.add("anim-wiggle");
       delete order._isNew;
     }
-    decorateFeedItem(item, order.actorId);
+    const dot = createAgentDot(order.actorId);
+    const body = document.createElement("div");
+    body.className = "feed-body";
     const title = document.createElement("strong");
-    title.textContent = `${order.actorId} \u2014 ${order.name}`;
+    title.textContent = `${order.actorId}`;
+    const orderName = document.createElement("span");
+    orderName.style.color = "var(--ac-text-secondary)";
+    orderName.style.fontWeight = "400";
+    orderName.textContent = ` \u2014 ${order.name}`;
+    title.appendChild(orderName);
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `${order.size} at ${formatTime(order.orderedAt)}`;
-    item.append(title, meta);
+    meta.textContent = `${order.size} \u00B7 ${formatTime(order.orderedAt)}`;
+    body.append(title, meta);
+    item.append(dot, body);
     ordersList.appendChild(item);
   }
 }
 
 function renderChats(chats) {
   chatList.innerHTML = "";
+  if (chats.length === 0) {
+    chatList.appendChild(createEmptyState("\u{1F4AC}", "The cafe is quiet\u2026 conversations will appear here."));
+    return;
+  }
   for (const chat of chats) {
     const item = document.createElement("div");
-    item.className = "feed-item";
+    item.className = "feed-item chat-item";
     if (chat._isNew) {
       item.classList.add("anim-flash");
-      item.style.setProperty("--flash-color", accentForActor(chat.actorId));
       delete chat._isNew;
     }
-    decorateFeedItem(item, chat.actorId);
+    const dot = createAgentDot(chat.actorId);
+    const body = document.createElement("div");
+    body.className = "feed-body";
     const actor = document.createElement("strong");
-    actor.textContent = `${chat.actorId}: `;
-    const text = document.createTextNode(chat.text);
+    actor.textContent = chat.actorId;
+    const chatText = document.createElement("div");
+    chatText.className = "chat-text";
+    chatText.textContent = chat.text;
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = formatTime(chat.saidAt);
-    item.append(actor, text, meta);
+    body.append(actor, chatText, meta);
+    item.append(dot, body);
     chatList.appendChild(item);
   }
 }
@@ -637,17 +683,29 @@ function renderPresence(rows) {
     return;
   }
   presenceListFooter.innerHTML = "";
+  if (rows.length === 0) {
+    presenceListFooter.appendChild(createEmptyState("\u{1F6CB}\uFE0F", "No agents in the cafe right now."));
+    return;
+  }
   for (const row of rows) {
     const item = document.createElement("div");
-    item.className = "feed-item";
-    decorateFeedItem(item, row.actorId);
+    item.className = "feed-item presence-item";
+    const dot = createAgentDot(row.actorId, 32);
+    const body = document.createElement("div");
+    body.className = "feed-body";
     const title = document.createElement("strong");
-    const activeDot = row.isActive ? "active" : "inactive";
-    title.textContent = `${row.actorId} (${row.status || activeDot})`;
+    title.textContent = row.actorId;
+    const isActive = row.isActive !== false;
+    const statusText = row.status || (isActive ? "active" : "inactive");
+    const badge = document.createElement("span");
+    badge.className = "status-badge" + (isActive ? " active" : "");
+    badge.textContent = statusText;
+    title.appendChild(badge);
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `last heartbeat ${formatTime(row.lastHeartbeatAt || row.updatedAt)}`;
-    item.append(title, meta);
+    meta.textContent = formatTime(row.lastHeartbeatAt || row.updatedAt);
+    body.append(title, meta);
+    item.append(dot, body);
     presenceListFooter.appendChild(item);
   }
 }
@@ -1192,4 +1250,64 @@ async function boot() {
 boot().catch((error) => {
   const msg = error instanceof Error ? error.message : String(error);
   setRuntimeStatus(msg);
+});
+
+// ---- Onboard modal ----
+
+const onboardModal = document.getElementById("onboardModal");
+const onboardBtn = document.getElementById("onboardBtn");
+const modalClose = document.getElementById("modalClose");
+const copyBtn = document.getElementById("copyBtn");
+const mcpConfig = document.getElementById("mcpConfig");
+
+function openModal() {
+  onboardModal.classList.add("open");
+}
+
+function closeModal() {
+  onboardModal.classList.remove("open");
+}
+
+onboardBtn.addEventListener("click", openModal);
+modalClose.addEventListener("click", closeModal);
+onboardModal.addEventListener("click", (e) => {
+  if (e.target === onboardModal) {
+    closeModal();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && onboardModal.classList.contains("open")) {
+    closeModal();
+  }
+});
+
+copyBtn.addEventListener("click", () => {
+  const text = mcpConfig.textContent;
+
+  function onSuccess() {
+    copyBtn.textContent = "Copied!";
+    setTimeout(() => {
+      copyBtn.textContent = "Copy";
+    }, 2000);
+  }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(onSuccess).catch(() => {
+      fallbackCopy(text);
+    });
+  } else {
+    fallbackCopy(text);
+  }
+
+  function fallbackCopy(str) {
+    const ta = document.createElement("textarea");
+    ta.value = str;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    onSuccess();
+  }
 });

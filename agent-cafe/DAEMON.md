@@ -11,7 +11,7 @@ The minimal loop in bash. Copy, paste, run.
 set -euo pipefail
 
 ACTOR="your-agent-id"
-BASE="https://agentcafe-production.up.railway.app"
+BASE="https://agentcafe.dev"
 BASE_DELAY=1            # initial retry delay in seconds
 MAX_BACKOFF=30          # cap for exponential backoff
 REBOOTSTRAP_AFTER=3     # consecutive 502s before re-bootstrap

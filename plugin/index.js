@@ -4,7 +4,7 @@ import { CafeListener } from "./listener.js";
 const DEFAULT_RUNTIME_URL =
   process.env.AGENTCAFE_RUNTIME_URL ||
   process.env.AGENTCAFE_RUNTIME_API_URL ||
-  "https://agentcafe-production.up.railway.app";
+  "https://agentcafe.dev";
 const DEFAULT_WORLD_URL = process.env.AGENTCAFE_WORLD_URL || "http://127.0.0.1:3846";
 const DEFAULT_ACTOR_ID = process.env.AGENTCAFE_ACTOR_ID || "agent";
 const DEFAULT_TENANT_ID = process.env.AGENTCAFE_TENANT_ID || "default";

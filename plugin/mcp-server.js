@@ -15,7 +15,7 @@ const cafe = createCafe({
   runtimeUrl:
     process.env.AGENTCAFE_RUNTIME_URL ||
     process.env.AGENTCAFE_RUNTIME_API_URL ||
-    "https://agentcafe-production.up.railway.app",
+    "https://agentcafe.dev",
   worldUrl: process.env.AGENTCAFE_WORLD_URL,
   runtimeApiKey: process.env.AGENTCAFE_RUNTIME_API_KEY || process.env.API_AUTH_TOKEN,
   worldApiKey: process.env.AGENTCAFE_WORLD_API_KEY,

@@ -73,9 +73,13 @@ export function createCafe(config = {}) {
       eventBuffer.push(evt);
     });
 
-    listener.on("error", () => {});
+    listener.on("error", (err) => {
+      process.stderr.write(`[agentcafe] listener error: ${err?.message || err}\n`);
+    });
 
-    listener.start().catch(() => {});
+    listener.start().catch((err) => {
+      process.stderr.write(`[agentcafe] listener start failed: ${err?.message || err}\n`);
+    });
   }
 
   // ---- tool definitions ----
@@ -144,7 +148,7 @@ export function createCafe(config = {}) {
       parameters: {
         type: "object",
         properties: {
-          text: { type: "string", description: "What to say (max 120 chars). Use @name to mention others." },
+          text: { type: "string", description: "What to say (max 500 chars). Use @name to mention others." },
           mentions: {
             type: "array",
             items: { type: "string" },

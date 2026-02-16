@@ -33,6 +33,9 @@ export class CafeListener extends EventEmitter {
   }
 
   async start() {
+    if (this._running) {
+      return;
+    }
     this._running = true;
     this._abortController = new AbortController();
 
@@ -112,7 +115,10 @@ export class CafeListener extends EventEmitter {
           this.emit("events", inbox);
         }
 
-        this._cursor = 0;
+        // Only reset cursor on initial bootstrap; preserve on re-bootstrap
+        if (this._cursor === 0) {
+          this._cursor = 0;
+        }
         this.emit("bootstrap", data);
         return;
       }
@@ -230,12 +236,15 @@ export class CafeListener extends EventEmitter {
 
   _sleep(ms) {
     return new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      // allow stop() abort to break sleep
       const onAbort = () => {
         clearTimeout(timer);
         resolve();
       };
+      const timer = setTimeout(() => {
+        this._abortController?.signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      // allow stop() abort to break sleep
       this._abortController?.signal?.addEventListener("abort", onAbort, { once: true });
     });
   }

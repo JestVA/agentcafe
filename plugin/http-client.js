@@ -168,9 +168,9 @@ export class AgentCafeClient {
     };
   }
 
-  enterCafe({ actorId } = {}) {
+  enterCafe({ actorId, tenantId, roomId } = {}) {
     return this.runtimeCommand("enter", {
-      ...this.#runtimeContext({ actorId })
+      ...this.#runtimeContext({ actorId, tenantId, roomId })
     });
   }
 
@@ -260,9 +260,9 @@ export class AgentCafeClient {
     };
   }
 
-  leaveCafe({ actorId } = {}) {
+  leaveCafe({ actorId, tenantId, roomId } = {}) {
     return this.runtimeCommand("leave", {
-      ...this.#runtimeContext({ actorId })
+      ...this.#runtimeContext({ actorId, tenantId, roomId })
     });
   }
 

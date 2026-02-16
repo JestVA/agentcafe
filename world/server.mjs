@@ -27,7 +27,8 @@ const STATIC_FILES = new Map([
   ["/", { file: "index.html", type: "text/html; charset=utf-8" }],
   ["/index.html", { file: "index.html", type: "text/html; charset=utf-8" }],
   ["/app.js", { file: "app.js", type: "text/javascript; charset=utf-8" }],
-  ["/styles.css", { file: "styles.css", type: "text/css; charset=utf-8" }]
+  ["/styles.css", { file: "styles.css", type: "text/css; charset=utf-8" }],
+  ["/favicon.svg", { file: "favicon.svg", type: "image/svg+xml" }]
 ]);
 
 const LEGACY_PATHS = new Set([

@@ -16,7 +16,7 @@ const CELL = 48;
 const DEFAULT_ACTOR_X = Math.floor(WORLD.width / 2);
 const DEFAULT_ACTOR_Y = Math.floor(WORLD.height / 2);
 const DEFAULT_BUBBLE_TTL_MS = 7000;
-const WORLD_STALE_ACTOR_MS = 5 * 60 * 1000;
+const WORLD_STALE_ACTOR_MS = 90 * 1000;
 const WORLD_RESYNC_IDLE_MS = 45 * 1000;
 const BRAND_COLORS = {
   espresso: "#2D2424",
@@ -104,6 +104,10 @@ const WORLD_EVENT_TYPES = new Set([
 ]);
 
 let runtimeStreamSource = null;
+let sseReconnectAttempts = 0;
+let sseReconnectTimer = null;
+const SSE_RECONNECT_BASE_MS = 1000;
+const SSE_RECONNECT_MAX_MS = 30000;
 const menuById = new Map();
 
 function clamp(n, min, max) {
@@ -994,6 +998,17 @@ function projectWorldFromEvents(events = [], options = {}) {
     }
   }
 
+  // Preserve live bubbles from previous world state
+  const now = Date.now();
+  for (const [actorId, oldActor] of runtimeState.worldActorsById.entries()) {
+    if (oldActor.bubble && Number(oldActor.bubble.expiresAt || 0) > now) {
+      const newActor = map.get(actorId);
+      if (newActor && newActor.inCafe && !newActor.bubble) {
+        newActor.bubble = oldActor.bubble;
+      }
+    }
+  }
+
   pruneWorldActors(map);
   runtimeState.worldActorsById = map;
   applyWorldFromMap();
@@ -1185,20 +1200,49 @@ function connectRuntimeStream() {
     });
   }
 
+  source.addEventListener("ready", () => {
+    sseReconnectAttempts = 0;
+  });
+
   source.onerror = () => {
     runtimeState.runtimeConnected = false;
     setRuntimeStatus("Reconnecting agents to the cafe...");
+    if (source.readyState === EventSource.CLOSED) {
+      scheduleReconnect();
+    }
   };
 
   return source;
 }
 
 function reconnectRuntimeStream() {
+  if (sseReconnectTimer) {
+    clearTimeout(sseReconnectTimer);
+    sseReconnectTimer = null;
+  }
   if (runtimeStreamSource) {
     runtimeStreamSource.close();
   }
   runtimeState.runtimeConnected = false;
+  sseReconnectAttempts = 0;
   runtimeStreamSource = connectRuntimeStream();
+}
+
+function scheduleReconnect() {
+  if (sseReconnectTimer) {
+    return;
+  }
+  sseReconnectAttempts += 1;
+  const exp = Math.min(sseReconnectAttempts, 5);
+  const delay = Math.min(SSE_RECONNECT_BASE_MS * (1 << exp), SSE_RECONNECT_MAX_MS);
+  const jitter = Math.random() * 1000;
+  sseReconnectTimer = setTimeout(() => {
+    sseReconnectTimer = null;
+    if (runtimeStreamSource) {
+      runtimeStreamSource.close();
+    }
+    runtimeStreamSource = connectRuntimeStream();
+  }, delay + jitter);
 }
 
 async function boot() {
@@ -1238,6 +1282,9 @@ async function boot() {
     const quietForMs = runtimeState.lastRuntimeEventAt == null ? Number.POSITIVE_INFINITY : Date.now() - runtimeState.lastRuntimeEventAt;
     if (runtimeState.runtimeConnected && quietForMs < WORLD_RESYNC_IDLE_MS) {
       return;
+    }
+    if (!runtimeState.runtimeConnected && !sseReconnectTimer) {
+      scheduleReconnect();
     }
     void refreshRuntimeWorld().catch(() => {});
   }, WORLD_RESYNC_IDLE_MS);

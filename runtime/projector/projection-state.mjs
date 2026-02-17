@@ -61,6 +61,20 @@ export class ProjectionState {
         direction: event.payload.direction,
         steps: event.payload.steps
       };
+      // Use absolute position if present (new events include it).
+      const movePos = event.payload?.position;
+      if (movePos && Number.isFinite(Number(movePos.x)) && Number.isFinite(Number(movePos.y))) {
+        actor.x = Math.round(Number(movePos.x));
+        actor.y = Math.round(Number(movePos.y));
+      } else {
+        // Fallback: compute from direction/steps for legacy events.
+        const steps = Number(event.payload.steps) || 1;
+        const dir = event.payload.direction;
+        if (dir === "N") actor.y = Math.max(0, actor.y - steps);
+        else if (dir === "S") actor.y = Math.min(11, actor.y + steps);
+        else if (dir === "E") actor.x = Math.min(19, actor.x + steps);
+        else if (dir === "W") actor.x = Math.max(0, actor.x - steps);
+      }
     } else if (event.type === "presence_heartbeat") {
       actor.status = event.payload?.status || actor.status;
       actor.presence = {

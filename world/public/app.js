@@ -302,15 +302,15 @@ function resolveActorTheme(actor) {
 }
 
 function drawStickmanWithCoffee(cx, cy, accentColor) {
-  const headRadius = 12;
-  const headY = cy - 18;
+  const headRadius = 8;
+  const headY = cy - 12;
   const neckY = headY + headRadius;
-  const torsoBottom = neckY + 20;
-  const armY = neckY + 8;
-  const legY = torsoBottom + 14;
+  const torsoBottom = neckY + 13;
+  const armY = neckY + 5;
+  const legY = torsoBottom + 9;
 
   ctx.strokeStyle = accentColor;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 2;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
@@ -320,13 +320,13 @@ function drawStickmanWithCoffee(cx, cy, accentColor) {
 
   ctx.fillStyle = BRAND_COLORS.espresso;
   ctx.beginPath();
-  ctx.arc(cx - 4, headY - 1, 2, 0, Math.PI * 2);
-  ctx.arc(cx + 4, headY - 1, 2, 0, Math.PI * 2);
+  ctx.arc(cx - 3, headY - 1, 1.5, 0, Math.PI * 2);
+  ctx.arc(cx + 3, headY - 1, 1.5, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.strokeStyle = BRAND_COLORS.espresso;
   ctx.beginPath();
-  ctx.arc(cx, headY + 4, 4, 0.3, Math.PI - 0.3);
+  ctx.arc(cx, headY + 3, 3, 0.3, Math.PI - 0.3);
   ctx.stroke();
 
   ctx.strokeStyle = accentColor;
@@ -337,30 +337,30 @@ function drawStickmanWithCoffee(cx, cy, accentColor) {
 
   ctx.beginPath();
   ctx.moveTo(cx, armY);
-  ctx.lineTo(cx - 14, armY + 6);
+  ctx.lineTo(cx - 9, armY + 4);
   ctx.moveTo(cx, armY);
-  ctx.lineTo(cx + 14, armY + 2);
+  ctx.lineTo(cx + 9, armY + 1);
   ctx.stroke();
 
   ctx.beginPath();
   ctx.moveTo(cx, torsoBottom);
-  ctx.lineTo(cx - 10, legY);
+  ctx.lineTo(cx - 7, legY);
   ctx.moveTo(cx, torsoBottom);
-  ctx.lineTo(cx + 10, legY);
+  ctx.lineTo(cx + 7, legY);
   ctx.stroke();
 
   ctx.strokeStyle = BRAND_COLORS.espresso;
-  ctx.strokeRect(cx + 14, armY - 1, 9, 9);
+  ctx.strokeRect(cx + 9, armY - 1, 6, 6);
   ctx.beginPath();
-  ctx.arc(cx + 24, armY + 3, 3, -Math.PI / 2, Math.PI / 2);
+  ctx.arc(cx + 16, armY + 2, 2, -Math.PI / 2, Math.PI / 2);
   ctx.stroke();
 
   ctx.strokeStyle = BRAND_COLORS.matcha;
   ctx.beginPath();
-  ctx.moveTo(cx + 16, armY - 4);
-  ctx.quadraticCurveTo(cx + 14, armY - 8, cx + 16, armY - 11);
-  ctx.moveTo(cx + 20, armY - 4);
-  ctx.quadraticCurveTo(cx + 18, armY - 8, cx + 20, armY - 11);
+  ctx.moveTo(cx + 10, armY - 3);
+  ctx.quadraticCurveTo(cx + 9, armY - 6, cx + 10, armY - 8);
+  ctx.moveTo(cx + 13, armY - 3);
+  ctx.quadraticCurveTo(cx + 12, armY - 6, cx + 13, armY - 8);
   ctx.stroke();
 }
 
@@ -538,11 +538,17 @@ function drawActor(actor) {
   drawNameLabel(actor.id, cx, cy, bubbleInfo, theme);
 }
 
+let renderScheduled = false;
 function render() {
-  drawGrid();
-  for (const actor of WORLD.actors) {
-    drawActor(actor);
-  }
+  if (renderScheduled) { return; }
+  renderScheduled = true;
+  requestAnimationFrame(() => {
+    renderScheduled = false;
+    drawGrid();
+    for (const actor of WORLD.actors) {
+      drawActor(actor);
+    }
+  });
 }
 
 function renderMenu(menu) {
@@ -874,18 +880,15 @@ function applyEventToWorld(map, event, options = {}) {
   actor.lastActiveAt = eventTimestampMs(event);
 
   if (type === "agent_entered") {
-    const isNew = !actor.inCafe;
     actor.inCafe = true;
-    if (isNew) {
-      actor.status = "idle";
-      const pos = event?.payload?.position;
-      if (pos != null && typeof pos === "object") {
-        const px = Number(pos.x);
-        const py = Number(pos.y);
-        if (Number.isFinite(px) && Number.isFinite(py)) {
-          actor.x = clamp(px, 0, WORLD.width - 1);
-          actor.y = clamp(py, 0, WORLD.height - 1);
-        }
+    actor.status = "idle";
+    const pos = event?.payload?.position;
+    if (pos != null && typeof pos === "object") {
+      const px = Number(pos.x);
+      const py = Number(pos.y);
+      if (Number.isFinite(px) && Number.isFinite(py)) {
+        actor.x = clamp(px, 0, WORLD.width - 1);
+        actor.y = clamp(py, 0, WORLD.height - 1);
       }
     }
     return;
@@ -894,6 +897,18 @@ function applyEventToWorld(map, event, options = {}) {
   if (type === "actor_moved") {
     actor.inCafe = true;
     actor.status = "busy";
+    // Prefer absolute position (new events include it) over relative computation.
+    const movePos = event?.payload?.position;
+    if (movePos != null && typeof movePos === "object") {
+      const mx = Number(movePos.x);
+      const my = Number(movePos.y);
+      if (Number.isFinite(mx) && Number.isFinite(my)) {
+        actor.x = clamp(mx, 0, WORLD.width - 1);
+        actor.y = clamp(my, 0, WORLD.height - 1);
+        return;
+      }
+    }
+    // Fallback for legacy events without absolute position.
     moveActorPosition(actor, String(event?.payload?.direction || "").toUpperCase(), Number(event?.payload?.steps || 1));
     return;
   }
@@ -1046,6 +1061,10 @@ async function refreshRuntimeWorld(options = {}) {
     const timelinePayload = await api(timelinePath);
     events = timelinePayload?.data?.events || [];
   }
+
+  // Advance the stream cursor so the SSE connection won't re-send events
+  // that were already processed in this replay (prevents flicker on load).
+  updateStreamCursorFromEvents(events);
 
   projectWorldFromEvents(events, { source });
 }
@@ -1279,11 +1298,13 @@ async function boot() {
   }, 30000);
 
   setInterval(() => {
-    const quietForMs = runtimeState.lastRuntimeEventAt == null ? Number.POSITIVE_INFINITY : Date.now() - runtimeState.lastRuntimeEventAt;
-    if (runtimeState.runtimeConnected && quietForMs < WORLD_RESYNC_IDLE_MS) {
+    // Only resync when the SSE stream is down.  When connected, live events
+    // are the source of truth — resyncing would overwrite them and cause
+    // position jumps (the "two positionings" desync).
+    if (runtimeState.runtimeConnected) {
       return;
     }
-    if (!runtimeState.runtimeConnected && !sseReconnectTimer) {
+    if (!sseReconnectTimer) {
       scheduleReconnect();
     }
     void refreshRuntimeWorld().catch(() => {});

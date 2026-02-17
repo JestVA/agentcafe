@@ -36,10 +36,15 @@ export class PgPresenceStore {
   }
 
   async heartbeat({ tenantId, roomId, actorId, status, ttlMs, nowIso = new Date().toISOString() }) {
-    const before = await this.get({ tenantId, roomId, actorId });
     const ttl = Math.max(1000, Number(ttlMs) || 60000);
     const result = await this.pool.query(
       `
+      WITH previous AS (
+        SELECT status AS previous_status
+        FROM presence_states
+        WHERE tenant_id = $1 AND room_id = $2 AND actor_id = $3
+        LIMIT 1
+      )
       INSERT INTO presence_states (
         tenant_id, room_id, actor_id, status, last_heartbeat_at, ttl_ms, expires_at, is_active, created_at, updated_at
       ) VALUES (
@@ -53,15 +58,19 @@ export class PgPresenceStore {
         expires_at = EXCLUDED.expires_at,
         is_active = true,
         updated_at = now()
-      RETURNING tenant_id, room_id, actor_id, status, last_heartbeat_at, ttl_ms, expires_at, is_active, created_at, updated_at
+      RETURNING
+        tenant_id, room_id, actor_id, status, last_heartbeat_at, ttl_ms, expires_at, is_active, created_at, updated_at,
+        (SELECT previous_status FROM previous) AS previous_status
       `,
       [tenantId, roomId, actorId, status, nowIso, ttl]
     );
-    const state = mapRow(result.rows[0]);
+    const row = result.rows[0];
+    const state = mapRow(row);
+    const previousStatus = row?.previous_status || null;
     return {
       state,
-      previousStatus: before?.status || null,
-      statusChanged: Boolean(before?.status && before.status !== status)
+      previousStatus,
+      statusChanged: Boolean(previousStatus && previousStatus !== status)
     };
   }
 

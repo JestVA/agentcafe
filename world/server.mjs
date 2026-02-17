@@ -126,9 +126,20 @@ function proxyRequestHeaders(req, allowList = []) {
   return out;
 }
 
+const MAX_PROXY_BODY_BYTES = 1024 * 1024; // 1 MB
+
 async function readBody(req) {
+  const contentLength = Number(req.headers["content-length"]);
+  if (Number.isFinite(contentLength) && contentLength > MAX_PROXY_BODY_BYTES) {
+    throw new Error(`request body too large (${contentLength} bytes)`);
+  }
   const chunks = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
+    totalBytes += chunk.length;
+    if (totalBytes > MAX_PROXY_BODY_BYTES) {
+      throw new Error("request body too large");
+    }
     chunks.push(chunk);
   }
   if (chunks.length === 0) {

@@ -582,23 +582,49 @@ async function resolveEnterPosition({ tenantId, roomId, actorId, payload }) {
     return requested;
   }
 
-  // Check if the actor already has a known position from event history.
-  const events = await eventStore.list({
+  // Check the actor's most recent position-relevant events (scoped to this actor, desc order).
+  // This is much cheaper than replaying the entire room's event history.
+  const positionTypes = ["actor_moved", "intent_completed", "agent_entered"];
+  const recentEvents = await eventStore.list({
     tenantId,
     roomId,
-    limit: 5000,
-    order: "asc"
+    actorId,
+    types: positionTypes,
+    limit: 1,
+    order: "desc"
   });
-  const projection = new ProjectionState();
-  for (const item of events) {
-    projection.apply(item);
-  }
-  const snapshot = projection.snapshot(tenantId, roomId);
 
-  const existing = snapshot.actors.find((item) => item.actorId === actorId);
-  const existingPosition = normalizeGridPosition(existing);
-  if (existingPosition) {
-    return existingPosition;
+  if (recentEvents.length > 0) {
+    const event = recentEvents[0];
+    // intent_completed has finalPosition
+    const finalPos = normalizeGridPosition(event.payload?.finalPosition);
+    if (finalPos) {
+      return finalPos;
+    }
+    // agent_entered has position
+    const enterPos = normalizeGridPosition(event.payload?.position);
+    if (enterPos) {
+      return enterPos;
+    }
+    // actor_moved: replay just this actor's move events to compute position
+    const moveEvents = await eventStore.list({
+      tenantId,
+      roomId,
+      actorId,
+      types: positionTypes,
+      limit: 200,
+      order: "asc"
+    });
+    const projection = new ProjectionState();
+    for (const item of moveEvents) {
+      projection.apply(item);
+    }
+    const snapshot = projection.snapshot(tenantId, roomId);
+    const existing = snapshot.actors.find((item) => item.actorId === actorId);
+    const existingPosition = normalizeGridPosition(existing);
+    if (existingPosition) {
+      return existingPosition;
+    }
   }
 
   // New actors spawn at the center — stacking is allowed.
@@ -2081,6 +2107,32 @@ async function handleCommand(req, res, url, requestId, rateHeaders) {
       traceCorrelationId: trace.correlationId
     });
 
+    // For move commands, resolve the actor's current position, compute the new
+    // absolute position, and embed it in the event payload.  This makes every
+    // actor_moved event self-describing so the frontend never needs to replay
+    // the full event history to know where an actor is.
+    if (route.type === EVENT_TYPES.MOVE) {
+      const currentPos = planner.getPosition({ tenantId, roomId, actorId });
+      // If the planner has no real position yet, bootstrap it from the event store
+      // (same logic used by resolveEnterPosition).
+      if (currentPos.x === 10 && currentPos.y === 6 && !planner.actorPositions.has(`${tenantId}:${roomId}:${actorId}`)) {
+        const resolved = await resolveEnterPosition({ tenantId, roomId, actorId, payload: {} });
+        planner.setPosition({ tenantId, roomId, actorId, x: resolved.x, y: resolved.y });
+        currentPos.x = resolved.x;
+        currentPos.y = resolved.y;
+      }
+      const dir = payload.direction;
+      const steps = payload.steps || 1;
+      let nx = currentPos.x;
+      let ny = currentPos.y;
+      if (dir === "N") ny = Math.max(WORLD_GRID_BOUNDS.minY, ny - steps);
+      else if (dir === "S") ny = Math.min(WORLD_GRID_BOUNDS.maxY, ny + steps);
+      else if (dir === "E") nx = Math.min(WORLD_GRID_BOUNDS.maxX, nx + steps);
+      else if (dir === "W") nx = Math.max(WORLD_GRID_BOUNDS.minX, nx - steps);
+      planner.setPosition({ tenantId, roomId, actorId, x: nx, y: ny });
+      payload.position = { x: nx, y: ny };
+    }
+
     const event = createEvent({
       tenantId,
       roomId,
@@ -2783,25 +2835,71 @@ async function handleEventsPoll(req, res, url, requestId, rateHeaders) {
     });
   }
 
-  let events = [];
-  while (true) {
-    events = await eventStore.list({
-      tenantId,
-      roomId,
-      actorId,
-      afterEventId,
-      afterCursor: Number.isFinite(afterCursor) ? afterCursor : undefined,
-      limit,
-      types,
-      order: "asc"
+  // First check: immediate events available?
+  let events = await eventStore.list({
+    tenantId,
+    roomId,
+    actorId,
+    afterEventId,
+    afterCursor: Number.isFinite(afterCursor) ? afterCursor : undefined,
+    limit,
+    types,
+    order: "asc"
+  });
+
+  // If no events, wait for notification or timeout (event-driven, no busy-wait)
+  if (events.length === 0 && timeoutMs > 0) {
+    let clientDisconnected = false;
+    const disconnectHandler = () => { clientDisconnected = true; };
+    req.on("close", disconnectHandler);
+
+    await new Promise((resolve) => {
+      let unsubscribe = null;
+      const timer = setTimeout(() => {
+        if (unsubscribe) unsubscribe();
+        resolve();
+      }, timeoutMs);
+
+      unsubscribe = eventStore.subscribe({
+        tenantId,
+        roomId,
+        actorId,
+        types,
+        onEvent: () => {
+          clearTimeout(timer);
+          if (unsubscribe) unsubscribe();
+          resolve();
+        }
+      });
+
+      // Also resolve early if client disconnects
+      if (clientDisconnected) {
+        clearTimeout(timer);
+        if (unsubscribe) unsubscribe();
+        resolve();
+      }
+      req.on("close", () => {
+        clearTimeout(timer);
+        if (unsubscribe) unsubscribe();
+        resolve();
+      });
     });
-    if (events.length > 0) {
-      break;
+
+    req.removeListener("close", disconnectHandler);
+
+    // Re-query after wakeup
+    if (!clientDisconnected) {
+      events = await eventStore.list({
+        tenantId,
+        roomId,
+        actorId,
+        afterEventId,
+        afterCursor: Number.isFinite(afterCursor) ? afterCursor : undefined,
+        limit,
+        types,
+        order: "asc"
+      });
     }
-    if (Date.now() - started >= timeoutMs) {
-      break;
-    }
-    await delay(pollIntervalMs);
   }
 
   const nextCursor = events.length
@@ -3853,6 +3951,33 @@ async function handleMarketStream(req, res, url, requestId) {
     }
   });
 
+  // Subscribe BEFORE replay to avoid losing events in the gap.
+  // Buffer live events during replay, then flush with dedup.
+  const liveBuffer = [];
+  let replayDone = false;
+
+  const unsubscribe = eventStore.subscribe({
+    tenantId,
+    roomId,
+    actorId,
+    types,
+    onEvent: (event) => {
+      if (!replayDone) {
+        liveBuffer.push(event);
+        return;
+      }
+      if (event.sequence <= cursor) {
+        return;
+      }
+      writeSseEvent(res, {
+        id: event.sequence,
+        type: event.type,
+        data: event
+      });
+      cursor = event.sequence;
+    }
+  });
+
   const replay = await eventStore.list({
     tenantId,
     roomId,
@@ -3872,20 +3997,20 @@ async function handleMarketStream(req, res, url, requestId) {
     cursor = event.sequence;
   }
 
-  const unsubscribe = eventStore.subscribe({
-    tenantId,
-    roomId,
-    actorId,
-    types,
-    onEvent: (event) => {
-      writeSseEvent(res, {
-        id: event.sequence,
-        type: event.type,
-        data: event
-      });
-      cursor = event.sequence;
+  // Flush any live events that arrived during replay, skipping duplicates
+  replayDone = true;
+  for (const event of liveBuffer) {
+    if (event.sequence <= cursor) {
+      continue;
     }
-  });
+    writeSseEvent(res, {
+      id: event.sequence,
+      type: event.type,
+      data: event
+    });
+    cursor = event.sequence;
+  }
+  liveBuffer.length = 0;
 
   const heartbeat = setInterval(() => {
     writeSseEvent(res, {
@@ -7162,7 +7287,8 @@ async function handleSubscriptions(req, res, url, requestId, rateHeaders) {
 const server = http.createServer(async (req, res) => {
   const requestId = getRequestId(req);
   const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown";
-  const rate = rateLimiter.check(`${ip}:${req.method}:${req.url || ""}`);
+  const ratePath = (req.url || "").split("?")[0];
+  const rate = rateLimiter.check(`${ip}:${req.method}:${ratePath}`);
   const rateHeaders = sendRateLimitHeaders(rate);
 
   try {

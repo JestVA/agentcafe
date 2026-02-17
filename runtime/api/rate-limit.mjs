@@ -1,11 +1,25 @@
 export class FixedWindowRateLimiter {
   constructor({
     limit = Number(process.env.API_RATE_LIMIT_PER_MIN || 120),
-    windowMs = 60 * 1000
+    windowMs = 60 * 1000,
+    sweepIntervalMs = 60 * 1000
   } = {}) {
     this.limit = limit;
     this.windowMs = windowMs;
     this.windows = new Map();
+    this._sweepTimer = setInterval(() => this.sweep(), sweepIntervalMs);
+    if (this._sweepTimer.unref) {
+      this._sweepTimer.unref();
+    }
+  }
+
+  sweep() {
+    const now = Date.now();
+    for (const [key, entry] of this.windows) {
+      if (entry.resetAt <= now) {
+        this.windows.delete(key);
+      }
+    }
   }
 
   check(key) {

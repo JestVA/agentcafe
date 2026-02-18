@@ -12,7 +12,7 @@ const WORLD = {
   actors: []
 };
 
-const CELL = 48;
+const CELL = 52;
 const DEFAULT_ACTOR_X = Math.floor(WORLD.width / 2);
 const DEFAULT_ACTOR_Y = Math.floor(WORLD.height / 2);
 const DEFAULT_BUBBLE_TTL_MS = 7000;
@@ -262,7 +262,7 @@ function drawGrid() {
   ctx.fillStyle = "#fdfcfa";
   ctx.fillRect(0, 0, width, height);
 
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.03)";
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.06)";
   ctx.lineWidth = 1;
 
   for (let x = 0; x <= WORLD.width; x += 1) {
@@ -559,12 +559,6 @@ function renderMenu(menu) {
       menuById.set(item.id, item);
     }
     const li = document.createElement("li");
-    if (item.icon) {
-      const icon = document.createElement("span");
-      icon.className = "menu-icon";
-      icon.textContent = item.icon;
-      li.appendChild(icon);
-    }
     const title = document.createElement("strong");
     title.textContent = item.name;
     const flavor = document.createElement("div");
@@ -629,31 +623,26 @@ function createEmptyState(icon, message) {
 function renderOrders(orders) {
   ordersList.innerHTML = "";
   if (orders.length === 0) {
-    ordersList.appendChild(createEmptyState("\u2615", "No orders yet\u2026 the barista is waiting."));
+    ordersList.appendChild(createEmptyState("\u2615", "No orders yet."));
     return;
   }
-  for (const order of orders) {
+  for (let i = 0; i < orders.length; i++) {
+    const order = orders[i];
     const item = document.createElement("div");
     item.className = "feed-item";
     if (order._isNew) {
       item.classList.add("anim-wiggle");
       delete order._isNew;
     }
-    const dot = createAgentDot(order.actorId);
     const body = document.createElement("div");
     body.className = "feed-body";
     const title = document.createElement("strong");
-    title.textContent = `${order.actorId}`;
-    const orderName = document.createElement("span");
-    orderName.style.color = "var(--ac-text-secondary)";
-    orderName.style.fontWeight = "400";
-    orderName.textContent = ` \u2014 ${order.name}`;
-    title.appendChild(orderName);
+    title.textContent = `${i + 1}. ${order.actorId} -> ${order.name}`;
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `${order.size} \u00B7 ${formatTime(order.orderedAt)}`;
+    meta.textContent = `${order.size} at ${formatTime(order.orderedAt)}`;
     body.append(title, meta);
-    item.append(dot, body);
+    item.appendChild(body);
     ordersList.appendChild(item);
   }
 }
@@ -661,7 +650,7 @@ function renderOrders(orders) {
 function renderChats(chats) {
   chatList.innerHTML = "";
   if (chats.length === 0) {
-    chatList.appendChild(createEmptyState("\u{1F4AC}", "The cafe is quiet\u2026 conversations will appear here."));
+    chatList.appendChild(createEmptyState("\u{1F4AC}", "The cafe is quiet."));
     return;
   }
   for (const chat of chats) {
@@ -671,19 +660,20 @@ function renderChats(chats) {
       item.classList.add("anim-flash");
       delete chat._isNew;
     }
-    const dot = createAgentDot(chat.actorId);
     const body = document.createElement("div");
     body.className = "feed-body";
+    const line = document.createElement("div");
     const actor = document.createElement("strong");
-    actor.textContent = chat.actorId;
-    const chatText = document.createElement("div");
+    actor.textContent = `${chat.actorId}: `;
+    const chatText = document.createElement("span");
     chatText.className = "chat-text";
     chatText.textContent = chat.text;
+    line.append(actor, chatText);
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = formatTime(chat.saidAt);
-    body.append(actor, chatText, meta);
-    item.append(dot, body);
+    body.append(line, meta);
+    item.appendChild(body);
     chatList.appendChild(item);
   }
 }

@@ -315,9 +315,12 @@ function drawStickmanWithCoffee(cx, cy, accentColor) {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
-  ctx.beginPath();
-  ctx.arc(cx, headY, headRadius, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.font = "16px serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("\u{1F916}", cx, headY);
+  ctx.textAlign = "start";
+  ctx.textBaseline = "alphabetic";
 
   ctx.strokeStyle = accentColor;
   ctx.beginPath();

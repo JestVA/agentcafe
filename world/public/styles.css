@@ -133,46 +133,42 @@ body {
 .world-stage {
   flex: 1 1 auto;
   min-height: 0;
-  border: 1px solid var(--ac-border-strong);
+  border: 1.5px solid var(--ac-mocha);
   border-radius: var(--radius-lg);
   background: var(--ac-latte);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px;
+  flex-direction: column;
   overflow: hidden;
 }
 
 canvas {
+  flex: 1 1 auto;
+  min-height: 0;
   max-width: 100%;
-  max-height: 100%;
-  width: auto;
+  width: 100%;
   height: auto;
   aspect-ratio: 5 / 3;
   border: none;
-  border-radius: var(--radius-md);
   background: #fdfcfa;
 }
 
-/* ---- Chat section below grid ---- */
+/* ---- Chat strip inside world stage ---- */
 
-.chat-section {
+.chat-strip {
   flex: 0 0 auto;
-  max-height: 240px;
-  border: 1px solid var(--ac-border);
-  border-radius: var(--radius-lg);
-  background: var(--ac-latte);
-  padding: 16px 20px;
-  overflow: hidden;
+  max-height: 180px;
+  border-top: 1px solid var(--ac-border);
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-.chat-section h2 {
-  margin: 0 0 10px;
+.chat-strip h2 {
+  margin: 0 0 8px;
   font-family: var(--font-ui);
   font-weight: 700;
-  font-size: 16px;
+  font-size: 14px;
   letter-spacing: -0.01em;
   color: var(--ac-text);
 }

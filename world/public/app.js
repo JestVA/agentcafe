@@ -27,6 +27,7 @@ const BRAND_COLORS = {
   mango: "#FFB648",
   lavender: "#B095FF",
   peach: "#FFD4B2",
+  mocha: "#d4c8b8",
   white: "#FFFFFF",
   black: "#111111"
 };
@@ -318,17 +319,6 @@ function drawStickmanWithCoffee(cx, cy, accentColor) {
   ctx.arc(cx, headY, headRadius, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.fillStyle = BRAND_COLORS.espresso;
-  ctx.beginPath();
-  ctx.arc(cx - 3, headY - 1, 1.5, 0, Math.PI * 2);
-  ctx.arc(cx + 3, headY - 1, 1.5, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.strokeStyle = BRAND_COLORS.espresso;
-  ctx.beginPath();
-  ctx.arc(cx, headY + 3, 3, 0.3, Math.PI - 0.3);
-  ctx.stroke();
-
   ctx.strokeStyle = accentColor;
   ctx.beginPath();
   ctx.moveTo(cx, neckY);
@@ -497,18 +487,13 @@ function drawNameLabel(actorId, cx, cy, bubbleInfo = null, theme = null) {
   }
   const y = clamp(preferredY, margin, WORLD.height * CELL - boxHeight - margin);
 
-  ctx.fillStyle = BRAND_COLORS.black;
-  ctx.beginPath();
-  ctx.roundRect(x + 3, y + 3, boxWidth, boxHeight, 10);
-  ctx.fill();
-
   ctx.fillStyle = BRAND_COLORS.white;
   ctx.beginPath();
   ctx.roundRect(x, y, boxWidth, boxHeight, 10);
   ctx.fill();
 
-  ctx.strokeStyle = BRAND_COLORS.black;
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = BRAND_COLORS.mocha;
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.roundRect(x, y, boxWidth, boxHeight, 10);
   ctx.stroke();
